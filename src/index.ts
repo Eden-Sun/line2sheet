@@ -18,6 +18,29 @@ for (const [k, v] of Object.entries({
   if (!v) { console.error(`❌ Missing env: ${k}`); process.exit(1); }
 }
 
+// ── 訊息解析：「客戶名稱 金額」─────────────────────────────────────────────
+// 格式：<客戶> <金額>，例如「某客戶 14600」
+// 回傳 null 代表格式不符，不寫入
+
+interface DeliveryRecord {
+  customer: string  // 客戶名稱
+  price: number     // 金額（整數）
+}
+
+function parseDelivery(text: string): DeliveryRecord | null {
+  const trimmed = text.trim()
+  // 最後一個 token 為金額，前面為客戶名稱（支援客戶名稱含空格）
+  const lastSpace = trimmed.lastIndexOf(" ")
+  if (lastSpace === -1) return null
+
+  const customer = trimmed.slice(0, lastSpace).trim()
+  const priceStr = trimmed.slice(lastSpace + 1).trim().replace(/,/g, "")
+  const price = Number(priceStr)
+
+  if (!customer || !Number.isFinite(price) || price <= 0) return null
+  return { customer, price }
+}
+
 // ── LINE ───────────────────────────────────────────────────────────────────
 
 function verifySignature(rawBody: string, signature: string): boolean {
@@ -31,7 +54,6 @@ function verifySignature(rawBody: string, signature: string): boolean {
   }
 }
 
-// Cache display names to avoid repeated API calls
 const _nameCache = new Map<string, string>();
 
 async function getDisplayName(userId: string): Promise<string> {
@@ -58,17 +80,19 @@ const auth = new google.auth.GoogleAuth({
 });
 const sheets = google.sheets({ version: "v4", auth });
 
-async function appendRow(
-  timestamp: string,
-  username: string,
-  text: string,
-  source: string,
+// 欄位：日期 | 時間 | 傳送者 | 客戶 | 金額
+async function appendRecord(
+  date: string,
+  time: string,
+  sender: string,
+  customer: string,
+  price: number,
 ): Promise<void> {
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:D`,
+    range: `${SHEET_NAME}!A:E`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[timestamp, username, source, text]] },
+    requestBody: { values: [[date, time, sender, customer, price]] },
   });
 }
 
@@ -77,8 +101,6 @@ async function appendRow(
 interface LineSource {
   type: "user" | "group" | "room";
   userId: string;
-  groupId?: string;
-  roomId?: string;
 }
 
 interface LineEvent {
@@ -95,7 +117,6 @@ const server = Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
 
-    // Health check
     if (pathname === "/health" && req.method === "GET")
       return new Response("OK");
 
@@ -115,7 +136,7 @@ const server = Bun.serve({
       return new Response("Bad Request", { status: 400 });
     }
 
-    // Process events async — return OK to LINE immediately (5s timeout)
+    // 非同步處理，確保 5s 內回 OK 給 LINE
     processEvents(events).catch(e => console.error("processEvents error:", e));
 
     return new Response("OK");
@@ -126,23 +147,25 @@ async function processEvents(events: LineEvent[]): Promise<void> {
   for (const event of events) {
     if (event.type !== "message" || event.message?.type !== "text") continue;
 
-    const timestamp = new Date(event.timestamp).toISOString();
-    const userId = event.source.userId;
-    const text = event.message.text;
+    const text = event.message.text.trim();
+    const record = parseDelivery(text);
 
-    // Source label: user / group:groupId / room:roomId
-    const sourceLabel =
-      event.source.type === "group"
-        ? `group:${event.source.groupId ?? "?"}`
-        : event.source.type === "room"
-          ? `room:${event.source.roomId ?? "?"}`
-          : "user";
+    if (!record) {
+      console.log(`⏭ 跳過（格式不符）：${text}`);
+      continue;
+    }
 
-    const username = await getDisplayName(userId);
+    const ts = new Date(event.timestamp);
+    // 台北時間 UTC+8
+    const tpe = new Date(ts.getTime() + 8 * 3600 * 1000);
+    const date = tpe.toISOString().slice(0, 10)          // YYYY-MM-DD
+    const time = tpe.toISOString().slice(11, 16)         // HH:mm
+
+    const sender = await getDisplayName(event.source.userId);
 
     try {
-      await appendRow(timestamp, username, text, sourceLabel);
-      console.log(`✅ [${timestamp}] ${sourceLabel} | ${username}: ${text}`);
+      await appendRecord(date, time, sender, record.customer, record.price);
+      console.log(`✅ ${date} ${time} | ${sender} → ${record.customer} $${record.price.toLocaleString()}`);
     } catch (e) {
       console.error(`❌ Sheets error: ${e}`);
     }
