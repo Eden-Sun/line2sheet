@@ -107,7 +107,42 @@ mv ~/Downloads/xxx.json /home/r7/line2sheet/service-account.json
 
 ---
 
-## 啟動
+## 部署到 Vercel（推薦）
+
+### 1. 設定環境變數
+
+在 Vercel Dashboard → Project → Settings → **Environment Variables** 新增：
+
+| 變數名稱 | 說明 |
+|----------|------|
+| `LINE_CHANNEL_SECRET` | LINE Channel Secret |
+| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Channel Access Token |
+| `SPREADSHEET_ID` | Google Sheet 網址的 ID |
+| `SHEET_NAME` | 工作表名稱（預設 Sheet1） |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | service-account.json 的**完整 JSON 內容**（貼上整個 JSON 字串） |
+
+> ⚠️ `GOOGLE_SERVICE_ACCOUNT_JSON` 是 JSON 字串，不是檔案路徑。打開 service-account.json，全選複製，直接貼到 Vercel env value 欄位。
+
+### 2. 關閉 Deployment Protection
+
+LINE webhook 需要公開存取，否則 Vercel SSO 會擋掉：
+
+Vercel Dashboard → Project → **Settings → Deployment Protection**
+→ 把保護設定改為 **"Only Preview Deployments"**（或直接關閉）
+
+### 3. LINE Webhook URL
+
+部署完成後，填入 LINE Developers 後台：
+
+```
+https://你的專案.vercel.app/api/webhook
+```
+
+> 注意是 `/api/webhook`，不是 `/webhook`。
+
+---
+
+## 本機開發（Bun + ngrok）
 
 ```bash
 cd /home/r7/line2sheet
