@@ -3,7 +3,7 @@ import { google } from "googleapis";
 
 const PORT = Number(process.env.PORT) || 3000;
 const CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET!;
-const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN!;
+const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? ""  // optional;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID!;
 const SHEET_NAME = process.env.SHEET_NAME ?? "Sheet1";
 
@@ -11,12 +11,12 @@ const SHEET_NAME = process.env.SHEET_NAME ?? "Sheet1";
 
 for (const [k, v] of Object.entries({
   LINE_CHANNEL_SECRET: CHANNEL_SECRET,
-  LINE_CHANNEL_ACCESS_TOKEN: CHANNEL_ACCESS_TOKEN,
   SPREADSHEET_ID,
   GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS,
 })) {
   if (!v) { console.error(`❌ Missing env: ${k}`); process.exit(1); }
 }
+if (!CHANNEL_ACCESS_TOKEN) console.warn("⚠️ LINE_CHANNEL_ACCESS_TOKEN not set — sender will show as userId")
 
 // ── 訊息解析：「客戶名稱 金額」─────────────────────────────────────────────
 // 格式：<客戶> <金額>，例如「某客戶 14600」
@@ -57,6 +57,7 @@ function verifySignature(rawBody: string, signature: string): boolean {
 const _nameCache = new Map<string, string>();
 
 async function getDisplayName(userId: string): Promise<string> {
+  if (!CHANNEL_ACCESS_TOKEN) return userId;  // skip if no token
   if (_nameCache.has(userId)) return _nameCache.get(userId)!;
   try {
     const res = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {

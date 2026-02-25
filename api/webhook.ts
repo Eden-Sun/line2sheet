@@ -10,7 +10,7 @@ export const config = {
 // ── Env ────────────────────────────────────────────────────────────────────
 
 const CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET!
-const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN!
+const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? ""  // optional
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID!
 const SHEET_NAME = process.env.SHEET_NAME ?? "Sheet1"
 // On Vercel: paste the full service-account JSON content as this env var
@@ -32,6 +32,7 @@ function verifySignature(rawBody: string, signature: string): boolean {
 // ── Display name (no cache in serverless — stateless) ─────────────────────
 
 async function getDisplayName(userId: string): Promise<string> {
+  if (!CHANNEL_ACCESS_TOKEN) return userId  // skip if no token
   try {
     const res = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
       headers: { Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}` },
