@@ -83,7 +83,7 @@ cp .env.example .env
 ```env
 LINE_CHANNEL_SECRET=你的_channel_secret
 LINE_CHANNEL_ACCESS_TOKEN=你的_channel_access_token
-SPREADSHEET_ID=試算表網址中的那串 ID
+SPREADSHEET_ID=試算表網址 /d/ 後面那串（例：1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms）
 SHEET_NAME=Sheet1
 GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
 PORT=3000
@@ -117,11 +117,25 @@ mv ~/Downloads/xxx.json /home/r7/line2sheet/service-account.json
 |----------|------|
 | `LINE_CHANNEL_SECRET` | LINE Channel Secret |
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Channel Access Token |
-| `SPREADSHEET_ID` | Google Sheet 網址的 ID |
+| `SPREADSHEET_ID` | Google Sheet 網址的 ID（見下方說明） |
 | `SHEET_NAME` | 工作表名稱（預設 Sheet1） |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | service-account.json 的**完整 JSON 內容**（貼上整個 JSON 字串） |
 
 > ⚠️ `GOOGLE_SERVICE_ACCOUNT_JSON` 是 JSON 字串，不是檔案路徑。打開 service-account.json，全選複製，直接貼到 Vercel env value 欄位。
+
+#### 如何取得 SPREADSHEET_ID
+
+打開你的 Google Sheet，看網址列：
+
+```
+https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms/edit#gid=0
+                                       ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+                                       這一段就是 SPREADSHEET_ID
+```
+
+`/d/` 後面、到 `/edit` 之前那一串就是 ID，複製貼上即可。
+
+> ⚠️ 記得把 Service Account 的 email 加入 Google Sheet **共用編輯者**，否則會沒有寫入權限。
 
 ### 2. 關閉 Deployment Protection
 
