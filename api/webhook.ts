@@ -15,6 +15,7 @@ const SPREADSHEET_ID = process.env.SPREADSHEET_ID!
 const SHEET_NAME = process.env.SHEET_NAME ?? "Sheet1"
 // On Vercel: paste the full service-account JSON content as this env var
 const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+console.log("[debug] GOOGLE_SERVICE_ACCOUNT_JSON set:", !!SERVICE_ACCOUNT_JSON, "length:", SERVICE_ACCOUNT_JSON?.length ?? 0)
 
 // ── LINE signature ─────────────────────────────────────────────────────────
 
