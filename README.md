@@ -72,7 +72,9 @@ Google Sheet 自動新增一行：
 
 ## 環境設定
 
-### 1. 複製並填寫 .env
+> 本機開發 和 Vercel 用不同的 Google 認證方式，**變數名稱不同，不要搞混**。
+
+### 本機 `.env`（Bun 開發用）
 
 ```bash
 cp .env.example .env
@@ -81,13 +83,24 @@ cp .env.example .env
 編輯 `.env`：
 
 ```env
+# LINE（必填）
 LINE_CHANNEL_SECRET=你的_channel_secret
+
+# LINE（選填）— 沒填的話傳送者欄位會顯示 userId，而不是名稱
 LINE_CHANNEL_ACCESS_TOKEN=你的_channel_access_token
+
+# Google Sheet（必填）
 SPREADSHEET_ID=試算表網址 /d/ 後面那串（例：1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms）
-SHEET_NAME=Sheet1
+SHEET_NAME=Sheet1  # 選填，預設 Sheet1
+
+# Google 認證（本機專用）— 指向本地 JSON 金鑰檔案路徑
 GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
+
+# 本機 port（選填，預設 3000）
 PORT=3000
 ```
+
+> ⚠️ `GOOGLE_APPLICATION_CREDENTIALS` 只用於本機，Vercel 上無效（沒有檔案系統）。
 
 ### 2. 建立 Google Service Account 並下載金鑰
 
@@ -159,13 +172,15 @@ JSON 內容長這樣（不要外洩）：
 
 在 Vercel Dashboard → Project → Settings → **Environment Variables** 新增：
 
-| 變數名稱 | 說明 |
-|----------|------|
-| `LINE_CHANNEL_SECRET` | LINE Channel Secret |
-| `LINE_CHANNEL_ACCESS_TOKEN` | LINE Channel Access Token |
-| `SPREADSHEET_ID` | Google Sheet 網址的 ID（見下方說明） |
-| `SHEET_NAME` | 工作表名稱（預設 Sheet1） |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | service-account.json 的**完整 JSON 內容**（貼上整個 JSON 字串） |
+| 變數名稱 | 必填 | 說明 |
+|----------|------|------|
+| `LINE_CHANNEL_SECRET` | ✅ | LINE Channel Secret |
+| `LINE_CHANNEL_ACCESS_TOKEN` | 選填 | LINE Channel Access Token；沒填的話傳送者欄位顯示 userId |
+| `SPREADSHEET_ID` | ✅ | Google Sheet 網址的 ID（見下方說明） |
+| `SHEET_NAME` | 選填 | 工作表名稱，預設 `Sheet1` |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | ✅ | service-account.json 的**完整 JSON 內容**（貼上整個 JSON 字串） |
+
+> ⚠️ Vercel 沒有檔案系統，**不能用** `GOOGLE_APPLICATION_CREDENTIALS`，改用 `GOOGLE_SERVICE_ACCOUNT_JSON`。
 
 > ⚠️ **`GOOGLE_SERVICE_ACCOUNT_JSON` 填法**
 >
