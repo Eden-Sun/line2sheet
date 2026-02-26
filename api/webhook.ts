@@ -12,6 +12,7 @@ export const config = {
 const CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET!
 const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? ""
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID!
+const LIFF_ID = process.env.LIFF_ID ?? ""
 
 // Sheet names (configurable via env)
 const SHEET_RAW        = process.env.SHEET_NAME        ?? "Sheet1"   // 原始紀錄（含 UID）
@@ -88,6 +89,65 @@ async function buildRosterMap(sheets: ReturnType<typeof buildSheetsClient>): Pro
   }
 }
 
+// ── LINE Reply API ─────────────────────────────────────────────────────────
+
+async function replyLiffButton(replyToken: string): Promise<void> {
+  if (!CHANNEL_ACCESS_TOKEN || !LIFF_ID) return
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [{
+        type: "flex",
+        altText: "點我開啟記帳表單",
+        contents: {
+          type: "bubble",
+          size: "kilo",
+          body: {
+            type: "box",
+            layout: "vertical",
+            spacing: "sm",
+            paddingAll: "20px",
+            contents: [
+              {
+                type: "text",
+                text: "📦 出貨記帳",
+                weight: "bold",
+                size: "lg",
+                color: "#06c755",
+              },
+              {
+                type: "text",
+                text: "填入客戶名稱與金額，送出後自動記錄",
+                size: "sm",
+                color: "#888888",
+                wrap: true,
+                margin: "sm",
+              },
+              {
+                type: "button",
+                action: {
+                  type: "uri",
+                  label: "開啟記帳表單",
+                  uri: `https://liff.line.me/${LIFF_ID}`,
+                },
+                style: "primary",
+                color: "#06c755",
+                margin: "lg",
+                height: "sm",
+              },
+            ],
+          },
+        },
+      }],
+    }),
+  })
+}
+
 // ── 訊息解析：「客戶名稱 金額」──────────────────────────────────────────────
 
 interface DeliveryRecord {
@@ -126,6 +186,7 @@ async function appendToSheet(
 interface LineEvent {
   type: string
   timestamp: number
+  replyToken: string
   source: { userId: string }
   message: { type: string; text: string }
 }
@@ -172,16 +233,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const roster = await buildRosterMap(sheets)
 
   for (const event of textEvents) {
-    const record = parseDelivery(event.message.text)
-    if (!record) {
-      console.log(`⏭ 跳過：${event.message.text}`)
+    const text = event.message.text.trim()
+
+    // 偵測「記帳」關鍵字 → 回覆 LIFF 按鈕
+    if (text === "記帳" || text === "記帳！") {
+      await replyLiffButton(event.replyToken)
+      console.log(`🔘 回覆 LIFF 按鈕給 ${event.source.userId}`)
       continue
     }
 
-    const ts = new Date(event.timestamp)
+    const record = parseDelivery(text)
+    if (!record) {
+      console.log(`⏭ 跳過：${text}`)
+      continue
+    }
+
+    const ts  = new Date(event.timestamp)
     const tpe = new Date(ts.getTime() + 8 * 3600_000)
-    const date = tpe.toISOString().slice(0, 10)   // YYYY-MM-DD
-    const time = tpe.toISOString().slice(11, 16)  // HH:mm
+    const date   = tpe.toISOString().slice(0, 10)
+    const time   = tpe.toISOString().slice(11, 16)
     const userId = event.source.userId
 
     // LINE 顯示名稱（若有 token）
