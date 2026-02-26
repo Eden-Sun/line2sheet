@@ -10,12 +10,29 @@ export const config = {
 // ── Env ────────────────────────────────────────────────────────────────────
 
 const CHANNEL_SECRET = process.env.LINE_CHANNEL_SECRET!
-const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? ""  // optional
+const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? ""
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID!
-const SHEET_NAME = process.env.SHEET_NAME ?? "Sheet1"
-// On Vercel: paste the full service-account JSON content as this env var
+
+// Sheet names (configurable via env)
+const SHEET_RAW        = process.env.SHEET_NAME        ?? "Sheet1"   // 原始紀錄（含 UID）
+const SHEET_CATEGORIZED = process.env.SHEET_CATEGORIZED ?? "分類紀錄"  // 附暱稱的紀錄
+const SHEET_ROSTER     = process.env.SHEET_ROSTER      ?? "名單"      // UID ↔ 暱稱對照表
+
 const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
-console.log("[debug] GOOGLE_SERVICE_ACCOUNT_JSON set:", !!SERVICE_ACCOUNT_JSON, "length:", SERVICE_ACCOUNT_JSON?.length ?? 0)
+
+// ── Google Auth (built once per cold start) ────────────────────────────────
+
+function buildSheetsClient() {
+  const authConfig = SERVICE_ACCOUNT_JSON
+    ? { credentials: JSON.parse(SERVICE_ACCOUNT_JSON) }
+    : { keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS }
+
+  const auth = new google.auth.GoogleAuth({
+    ...authConfig,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  })
+  return google.sheets({ version: "v4", auth })
+}
 
 // ── LINE signature ─────────────────────────────────────────────────────────
 
@@ -30,10 +47,10 @@ function verifySignature(rawBody: string, signature: string): boolean {
   }
 }
 
-// ── Display name (no cache in serverless — stateless) ─────────────────────
+// ── Display name from LINE API ─────────────────────────────────────────────
 
 async function getDisplayName(userId: string): Promise<string> {
-  if (!CHANNEL_ACCESS_TOKEN) return userId  // skip if no token
+  if (!CHANNEL_ACCESS_TOKEN) return userId
   try {
     const res = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
       headers: { Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}` },
@@ -43,6 +60,31 @@ async function getDisplayName(userId: string): Promise<string> {
     return displayName ?? userId
   } catch {
     return userId
+  }
+}
+
+// ── 名單：UID → 暱稱對照 ───────────────────────────────────────────────────
+// 名單 sheet 格式：A欄=UID, B欄=暱稱（第一行可為標題，自動跳過）
+
+async function buildRosterMap(sheets: ReturnType<typeof buildSheetsClient>): Promise<Map<string, string>> {
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_ROSTER}!A:B`,
+    })
+    const rows = res.data.values ?? []
+    const map = new Map<string, string>()
+    for (const row of rows) {
+      const uid = (row[0] ?? "").trim()
+      const nickname = (row[1] ?? "").trim()
+      if (uid && nickname && !uid.startsWith("UID") && !uid.startsWith("uid")) {
+        map.set(uid, nickname)
+      }
+    }
+    return map
+  } catch (e) {
+    console.warn("⚠️ 無法讀取名單 sheet:", e)
+    return new Map()
   }
 }
 
@@ -64,25 +106,18 @@ function parseDelivery(text: string): DeliveryRecord | null {
   return { customer, price }
 }
 
-// ── Google Sheets ──────────────────────────────────────────────────────────
+// ── 寫入 Google Sheets ─────────────────────────────────────────────────────
 
-async function appendRecord(
-  date: string, time: string, sender: string, customer: string, price: number,
+async function appendToSheet(
+  sheets: ReturnType<typeof buildSheetsClient>,
+  sheetName: string,
+  row: (string | number)[],
 ): Promise<void> {
-  const authConfig = SERVICE_ACCOUNT_JSON
-    ? { credentials: JSON.parse(SERVICE_ACCOUNT_JSON) }
-    : { keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS }
-
-  const auth = new google.auth.GoogleAuth({
-    ...authConfig,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-  })
-  const sheets = google.sheets({ version: "v4", auth })
   await sheets.spreadsheets.values.append({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}!A:E`,
+    range: `${sheetName}!A:E`,
     valueInputOption: "USER_ENTERED",
-    requestBody: { values: [[date, time, sender, customer, price]] },
+    requestBody: { values: [row] },
   })
 }
 
@@ -126,9 +161,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).send("Bad Request")
   }
 
-  for (const event of events) {
-    if (event.type !== "message" || event.message?.type !== "text") continue
+  // 過濾出有效的訊息事件
+  const textEvents = events.filter(
+    e => e.type === "message" && e.message?.type === "text"
+  )
+  if (textEvents.length === 0) return res.status(200).send("OK")
 
+  // 建立 Sheets client & 讀取名單（一次 per request）
+  const sheets = buildSheetsClient()
+  const roster = await buildRosterMap(sheets)
+
+  for (const event of textEvents) {
     const record = parseDelivery(event.message.text)
     if (!record) {
       console.log(`⏭ 跳過：${event.message.text}`)
@@ -137,13 +180,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const ts = new Date(event.timestamp)
     const tpe = new Date(ts.getTime() + 8 * 3600_000)
-    const date = tpe.toISOString().slice(0, 10)
-    const time = tpe.toISOString().slice(11, 16)
-    const sender = await getDisplayName(event.source.userId)
+    const date = tpe.toISOString().slice(0, 10)   // YYYY-MM-DD
+    const time = tpe.toISOString().slice(11, 16)  // HH:mm
+    const userId = event.source.userId
+
+    // LINE 顯示名稱（若有 token）
+    const displayName = await getDisplayName(userId)
+    // 暱稱（從名單 sheet 查詢；找不到就用 displayName）
+    const nickname = roster.get(userId) ?? displayName
 
     try {
-      await appendRecord(date, time, sender, record.customer, record.price)
-      console.log(`✅ ${date} ${time} | ${sender} → ${record.customer} $${record.price}`)
+      // 1. 原始紀錄（Sheet1）：存 UID，方便對照
+      await appendToSheet(sheets, SHEET_RAW, [date, time, userId, record.customer, record.price])
+
+      // 2. 分類紀錄：存暱稱，方便閱讀
+      await appendToSheet(sheets, SHEET_CATEGORIZED, [date, time, nickname, record.customer, record.price])
+
+      console.log(`✅ ${date} ${time} | ${nickname}(${userId}) → ${record.customer} $${record.price}`)
     } catch (e) {
       console.error("Sheets error:", e)
     }

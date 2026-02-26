@@ -56,17 +56,50 @@ Google Sheet 自動新增一行：
 
 ---
 
-## Google Sheet 欄位
+## Google Sheet 結構
+
+系統使用三個分頁，只有 service account 可寫入，其他人設為「僅供檢視」即可。
+
+### Sheet1（原始紀錄）
+
+每筆訊息的完整記錄，**傳送者欄存 LINE userId**，方便對照名單。
 
 | 欄 | 欄位名稱 | 說明 | 範例 |
 |----|----------|------|------|
 | A | 日期 | YYYY-MM-DD | 2026-02-25 |
-| B | 時間 | HH:mm | 21:03 |
-| C | 傳送者 | LINE 顯示名稱（誰傳的） | Eden |
+| B | 時間 | HH:mm（台北時間） | 21:03 |
+| C | 傳送者 | LINE userId（UID） | Uf1a2b3c4d5e6f... |
 | D | 客戶 | 解析出的客戶名稱 | 某客戶 |
 | E | 金額 | 解析出的金額（數字） | 14600 |
 
-> **第一行建議設為標題列**（日期 / 時間 / 傳送者 / 客戶 / 金額），方便篩選與加總。
+### 分類紀錄
+
+同 Sheet1，但**傳送者欄顯示暱稱**（從名單對照）。方便日常閱讀與加總。
+
+| 欄 | 說明 |
+|----|------|
+| A | 日期 |
+| B | 時間 |
+| C | 暱稱（從名單查出；找不到則顯示 LINE 顯示名稱） |
+| D | 客戶 |
+| E | 金額 |
+
+### 名單（UID ↔ 暱稱對照）
+
+手動維護。系統每次收到訊息時從這裡查出對應暱稱。
+
+| 欄 | 說明 | 範例 |
+|----|------|------|
+| A | LINE userId（UID） | Uf1a2b3c4d5e6f7890abcdef |
+| B | 暱稱 | Eden |
+
+> 第一行可設標題列（UID / 暱稱），系統會自動跳過包含「uid」開頭的列。
+>
+> **取得自己的 UID：** 傳一條訊息給 bot，去 Sheet1 的 C 欄找那串 U 開頭的字串，貼到名單 A 欄即可。
+
+---
+
+> **第一行建議設為標題列**，方便篩選與加總。
 
 ---
 
@@ -177,7 +210,9 @@ JSON 內容長這樣（不要外洩）：
 | `LINE_CHANNEL_SECRET` | ✅ | LINE Channel Secret |
 | `LINE_CHANNEL_ACCESS_TOKEN` | 選填 | LINE Channel Access Token；沒填的話傳送者欄位顯示 userId |
 | `SPREADSHEET_ID` | ✅ | Google Sheet 網址的 ID（見下方說明） |
-| `SHEET_NAME` | 選填 | 工作表名稱，預設 `Sheet1` |
+| `SHEET_NAME` | 選填 | 原始紀錄分頁名稱，預設 `Sheet1` |
+| `SHEET_CATEGORIZED` | 選填 | 附暱稱分頁名稱，預設 `分類紀錄` |
+| `SHEET_ROSTER` | 選填 | UID↔暱稱對照分頁名稱，預設 `名單` |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | ✅ | service-account.json 的**完整 JSON 內容**（貼上整個 JSON 字串） |
 
 > ⚠️ Vercel 沒有檔案系統，**不能用** `GOOGLE_APPLICATION_CREDENTIALS`，改用 `GOOGLE_SERVICE_ACCOUNT_JSON`。
