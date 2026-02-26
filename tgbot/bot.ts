@@ -1,18 +1,44 @@
 import { Bot, InlineKeyboard } from "grammy"
 import { google } from "googleapis"
+import { readFileSync, writeFileSync, mkdirSync } from "fs"
+import { join, dirname } from "path"
+import { fileURLToPath } from "url"
+
+const __dir = dirname(fileURLToPath(import.meta.url))
 
 // ── Env ────────────────────────────────────────────────────────────────────
 
-const BOT_TOKEN         = process.env.TG_BOT_TOKEN!
-const SPREADSHEET_ID    = process.env.SPREADSHEET_ID!
-const SHEET_RAW         = process.env.SHEET_NAME        ?? "Sheet1"
-const SHEET_CATEGORIZED = process.env.SHEET_CATEGORIZED ?? "分類紀錄"
-const SHEET_ROSTER      = process.env.SHEET_ROSTER      ?? "名單"
+const BOT_TOKEN            = process.env.TG_BOT_TOKEN!
+const SPREADSHEET_ID       = process.env.SPREADSHEET_ID!
+const SHEET_RAW            = process.env.SHEET_NAME        ?? "Sheet1"
+const SHEET_CATEGORIZED    = process.env.SHEET_CATEGORIZED ?? "分類紀錄"
+const SHEET_ROSTER         = process.env.SHEET_ROSTER      ?? "名單"
 const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON!
 
-if (!BOT_TOKEN || !SPREADSHEET_ID || !SERVICE_ACCOUNT_JSON) {
-  console.error("❌ Missing required env vars: TG_BOT_TOKEN, SPREADSHEET_ID, GOOGLE_SERVICE_ACCOUNT_JSON")
-  process.exit(1)
+// ── Amount history ─────────────────────────────────────────────────────────
+
+const DATA_FILE = join(__dir, "data", "amounts.json")
+mkdirSync(join(__dir, "data"), { recursive: true })
+
+function loadAmounts(): Record<string, number[]> {
+  try { return JSON.parse(readFileSync(DATA_FILE, "utf8")) } catch { return {} }
+}
+function saveAmounts(d: Record<string, number[]>) {
+  writeFileSync(DATA_FILE, JSON.stringify(d, null, 2))
+}
+function recordAmount(customer: string, amount: number) {
+  const d = loadAmounts()
+  const list = [amount, ...(d[customer] ?? []).filter(x => x !== amount)].slice(0, 5)
+  d[customer] = list
+  saveAmounts(d)
+}
+function getRecentAmounts(customer: string): number[] {
+  const d = loadAmounts()
+  // merge customer-specific + global presets
+  const specific = d[customer] ?? []
+  const global = d["__global__"] ?? [1000, 3000, 5000, 10000, 20000]
+  const merged = [...new Set([...specific, ...global])].slice(0, 6)
+  return merged
 }
 
 // ── Google Sheets ──────────────────────────────────────────────────────────
@@ -25,16 +51,14 @@ function buildSheets() {
   return google.sheets({ version: "v4", auth })
 }
 
-async function getRoster(): Promise<{ uid: string; name: string }[]> {
+async function getRoster(): Promise<string[]> {
   try {
-    const sheets = buildSheets()
-    const res = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_ROSTER}!A:B`,
+    const res = await buildSheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_ROSTER}!A:B`,
     })
     return (res.data.values ?? [])
-      .filter(r => r[0] && r[1] && !/^uid$/i.test(r[0]))
-      .map(r => ({ uid: r[0].trim(), name: r[1].trim() }))
+      .filter(r => r[1] && !/^uid$/i.test(r[0] ?? ""))
+      .map(r => r[1].trim())
   } catch { return [] }
 }
 
@@ -44,160 +68,232 @@ async function writeRecord(sender: string, customer: string, price: number) {
   const date = now.toISOString().slice(0, 10)
   const time = now.toISOString().slice(11, 16)
   await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_RAW}!A:E`,
+    spreadsheetId: SPREADSHEET_ID, range: `${SHEET_RAW}!A:E`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[date, time, `tg:${sender}`, customer, price]] },
   })
   await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_CATEGORIZED}!A:E`,
+    spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CATEGORIZED}!A:E`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [[date, time, sender, customer, price]] },
   })
   return { date, time }
 }
 
-// ── State machine (per chat) ───────────────────────────────────────────────
+// ── State ──────────────────────────────────────────────────────────────────
 
 interface State {
-  step: "await_customer" | "await_amount"
+  step: "customer" | "amount" | "custom_amount" | "confirm"
   sender: string
   customer?: string
+  amount?: number
 }
-const state = new Map<number, State>()
+const sessions = new Map<number, State>()
+
+// ── Keyboards ──────────────────────────────────────────────────────────────
+
+async function customerKeyboard(): Promise<{ kb: InlineKeyboard; text: string }> {
+  const names = await getRoster()
+  const kb = new InlineKeyboard()
+  names.forEach((name, i) => {
+    kb.text(name, `c:${name}`)
+    if ((i + 1) % 3 === 0) kb.row()
+  })
+  if (names.length % 3 !== 0) kb.row()
+  kb.text("✏️ 自行輸入", "c:__custom__")
+  return { kb, text: "👤 選擇客戶：" }
+}
+
+function amountKeyboard(customer: string): { kb: InlineKeyboard; text: string } {
+  const amounts = getRecentAmounts(customer)
+  const kb = new InlineKeyboard()
+  amounts.forEach((a, i) => {
+    kb.text(`$${a.toLocaleString()}`, `a:${a}`)
+    if ((i + 1) % 3 === 0) kb.row()
+  })
+  if (amounts.length % 3 !== 0) kb.row()
+  kb.text("✏️ 自行輸入", "a:__custom__")
+  return { kb, text: `📋 客戶：*${customer}*\n\n💰 選擇金額：` }
+}
+
+function confirmKeyboard(customer: string, amount: number): { kb: InlineKeyboard; text: string } {
+  const kb = new InlineKeyboard()
+    .text("✅ 確認記帳", "confirm")
+    .text("❌ 取消", "cancel")
+    .row()
+    .text("↩️ 重選客戶", "back:customer")
+    .text("↩️ 重選金額", "back:amount")
+  return {
+    kb,
+    text: `📦 *確認記帳*\n\n👤 客戶：*${customer}*\n💰 金額：*$${amount.toLocaleString()}*\n\n送出？`
+  }
+}
 
 // ── Bot ────────────────────────────────────────────────────────────────────
 
 const bot = new Bot(BOT_TOKEN)
 
-// /start
-bot.command("start", ctx => ctx.reply(
-  "📦 *出貨記帳 Bot*\n\n傳送 /add 開始記帳，或直接輸入 `客戶名稱 金額`",
-  { parse_mode: "Markdown" }
-))
-
-// /add 或「記帳」
-async function startRecord(ctx: any) {
-  const userId = ctx.from?.id
-  if (!userId) return
-
-  const roster = await getRoster()
-  const senderName = ctx.from?.first_name ?? String(userId)
-
-  if (roster.length === 0) {
-    // 沒有名單，直接問客戶名稱
-    state.set(ctx.chat.id, { step: "await_customer", sender: senderName })
-    await ctx.reply("📋 請輸入客戶名稱：")
-    return
-  }
-
-  // 建立名單按鈕
-  const kb = new InlineKeyboard()
-  roster.forEach((r, i) => {
-    kb.text(r.name, `customer:${r.name}`)
-    if ((i + 1) % 3 === 0) kb.row()
-  })
-  kb.row().text("✏️ 自行輸入", "customer:__custom__")
-
-  state.set(ctx.chat.id, { step: "await_customer", sender: senderName })
-  await ctx.reply("👤 選擇客戶：", { reply_markup: kb })
+async function startAdd(ctx: any) {
+  const sender = ctx.from?.first_name ?? String(ctx.from?.id ?? "用戶")
+  sessions.set(ctx.chat.id, { step: "customer", sender })
+  const { kb, text } = await customerKeyboard()
+  await ctx.reply(text, { reply_markup: kb, parse_mode: "Markdown" })
 }
 
-bot.command("add", startRecord)
-bot.hears(/^記帳$/, startRecord)
+bot.command("start", ctx => ctx.reply(
+  "📦 *出貨記帳 Bot*\n\n傳 /add 或「記帳」開始\n\n或直接傳 `客戶名稱 金額` 快速記帳",
+  { parse_mode: "Markdown" }
+))
+bot.command("add", startAdd)
+bot.hears(/^記帳$/, startAdd)
 
-// Inline button callback
-bot.callbackQuery(/^customer:(.+)$/, async ctx => {
-  const chatId = ctx.chat?.id
-  if (!chatId) return
-  const s = state.get(chatId)
-  if (!s) return await ctx.answerCallbackQuery()
+// ── Callback handlers ──────────────────────────────────────────────────────
 
-  const name = ctx.match[1]
+// 選客戶
+bot.callbackQuery(/^c:(.+)$/, async ctx => {
   await ctx.answerCallbackQuery()
+  const chatId = ctx.chat!.id
+  const s = sessions.get(chatId)
+  if (!s) return
 
-  if (name === "__custom__") {
-    state.set(chatId, { ...s, step: "await_customer" })
+  const val = ctx.match[1]
+  if (val === "__custom__") {
+    sessions.set(chatId, { ...s, step: "customer" })
     await ctx.editMessageText("✏️ 請輸入客戶名稱：")
     return
   }
 
-  state.set(chatId, { step: "await_amount", sender: s.sender, customer: name })
-  await ctx.editMessageText(`📋 客戶：*${name}*\n\n💰 請輸入金額：`, { parse_mode: "Markdown" })
+  sessions.set(chatId, { ...s, step: "amount", customer: val })
+  const { kb, text } = amountKeyboard(val)
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "Markdown" })
 })
 
-// Message handler
-bot.on("message:text", async ctx => {
-  const chatId = ctx.chat.id
-  const text = ctx.message.text.trim()
-  const s = state.get(chatId)
+// 選金額
+bot.callbackQuery(/^a:(.+)$/, async ctx => {
+  await ctx.answerCallbackQuery()
+  const chatId = ctx.chat!.id
+  const s = sessions.get(chatId)
+  if (!s || !s.customer) return
 
-  // ── 1. Shortcut：直接「客戶 金額」格式 ───────────────────────────────
-  if (!s) {
-    const i = text.lastIndexOf(" ")
-    if (i !== -1) {
-      const customer = text.slice(0, i).trim()
-      const price = Number(text.slice(i + 1).replace(/,/g, ""))
-      if (customer && Number.isFinite(price) && price > 0) {
-        const sender = ctx.from?.first_name ?? String(ctx.from?.id)
-        try {
-          const { date, time } = await writeRecord(sender, customer, price)
-          await ctx.reply(
-            `✅ 已記帳\n\n👤 ${sender}\n📋 ${customer}\n💰 $${price.toLocaleString()}\n🕐 ${date} ${time}`,
-            { parse_mode: "Markdown" }
-          )
-        } catch (e: any) {
-          await ctx.reply(`❌ 記帳失敗：${e.message}`)
-        }
-        return
-      }
-    }
-    // 不認識的訊息
-    await ctx.reply("傳 /add 開始記帳，或直接輸入 `客戶名稱 金額`", { parse_mode: "Markdown" })
+  const val = ctx.match[1]
+  if (val === "__custom__") {
+    sessions.set(chatId, { ...s, step: "custom_amount" })
+    await ctx.editMessageText(`📋 客戶：*${s.customer}*\n\n✏️ 請輸入金額：`, { parse_mode: "Markdown" })
     return
   }
 
-  // ── 2. Step: 等待客戶名稱 ────────────────────────────────────────────
-  if (s.step === "await_customer") {
-    state.set(chatId, { ...s, step: "await_amount", customer: text })
-    await ctx.reply(`📋 客戶：*${text}*\n\n💰 請輸入金額：`, { parse_mode: "Markdown" })
-    return
-  }
+  const amount = Number(val)
+  sessions.set(chatId, { ...s, step: "confirm", amount })
+  const { kb, text } = confirmKeyboard(s.customer, amount)
+  await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "Markdown" })
+})
 
-  // ── 3. Step: 等待金額 ─────────────────────────────────────────────────
-  if (s.step === "await_amount") {
-    const price = Number(text.replace(/,/g, ""))
-    if (!Number.isFinite(price) || price <= 0) {
-      await ctx.reply("❌ 金額格式不對，請重新輸入數字：")
-      return
-    }
+// 確認記帳
+bot.callbackQuery("confirm", async ctx => {
+  await ctx.answerCallbackQuery()
+  const chatId = ctx.chat!.id
+  const s = sessions.get(chatId)
+  if (!s?.customer || !s.amount) return
 
-    state.delete(chatId)
-    try {
-      const { date, time } = await writeRecord(s.sender, s.customer!, price)
-      const kb = new InlineKeyboard()
-        .text("📦 繼續記帳", "restart")
-        .text("✅ 完成", "done")
-      await ctx.reply(
-        `✅ 已記帳！\n\n👤 ${s.sender}\n📋 ${s.customer}\n💰 $${price.toLocaleString()}\n🕐 ${date} ${time}`,
-        { reply_markup: kb }
-      )
-    } catch (e: any) {
-      await ctx.reply(`❌ 記帳失敗：${e.message}`)
-    }
+  sessions.delete(chatId)
+  await ctx.editMessageText("⏳ 記帳中…")
+
+  try {
+    const { date, time } = await writeRecord(s.sender, s.customer, s.amount)
+    recordAmount(s.customer, s.amount)
+
+    const kb = new InlineKeyboard()
+      .text("📦 繼續記帳", "restart")
+      .text("✅ 完成", "done")
+    await ctx.editMessageText(
+      `✅ *已記帳！*\n\n👤 ${s.sender}\n📋 ${s.customer}\n💰 $${s.amount.toLocaleString()}\n🕐 ${date} ${time}`,
+      { reply_markup: kb, parse_mode: "Markdown" }
+    )
+  } catch (e: any) {
+    await ctx.editMessageText(`❌ 記帳失敗：${e.message}`)
   }
 })
 
-// 繼續/完成按鈕
+// 取消
+bot.callbackQuery("cancel", async ctx => {
+  await ctx.answerCallbackQuery("已取消")
+  sessions.delete(ctx.chat!.id)
+  await ctx.editMessageText("已取消 ✋")
+})
+
+// 返回
+bot.callbackQuery(/^back:(.+)$/, async ctx => {
+  await ctx.answerCallbackQuery()
+  const chatId = ctx.chat!.id
+  const s = sessions.get(chatId)
+  if (!s) return
+
+  if (ctx.match[1] === "customer") {
+    sessions.set(chatId, { ...s, step: "customer", customer: undefined, amount: undefined })
+    const { kb, text } = await customerKeyboard()
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "Markdown" })
+  } else {
+    sessions.set(chatId, { ...s, step: "amount", amount: undefined })
+    const { kb, text } = amountKeyboard(s.customer!)
+    await ctx.editMessageText(text, { reply_markup: kb, parse_mode: "Markdown" })
+  }
+})
+
+// 重新開始 / 完成
 bot.callbackQuery("restart", async ctx => {
   await ctx.answerCallbackQuery()
   await ctx.editMessageReplyMarkup()
-  await startRecord(ctx)
+  await startAdd(ctx)
 })
 bot.callbackQuery("done", async ctx => {
-  await ctx.answerCallbackQuery("👍 完成！")
+  await ctx.answerCallbackQuery("👍")
   await ctx.editMessageReplyMarkup()
 })
 
-bot.start({ onStart: info => console.log(`🤖 Bot @${info.username} started`) })
+// ── 文字訊息 ───────────────────────────────────────────────────────────────
+
+bot.on("message:text", async ctx => {
+  const chatId = ctx.chat.id
+  const text   = ctx.message.text.trim()
+  const s      = sessions.get(chatId)
+
+  // 等待客戶名稱（自行輸入）
+  if (s?.step === "customer") {
+    sessions.set(chatId, { ...s, step: "amount", customer: text })
+    const { kb, text: t } = amountKeyboard(text)
+    await ctx.reply(t, { reply_markup: kb, parse_mode: "Markdown" })
+    return
+  }
+
+  // 等待金額（自行輸入）
+  if (s?.step === "custom_amount") {
+    const price = Number(text.replace(/,/g, ""))
+    if (!Number.isFinite(price) || price <= 0) {
+      await ctx.reply("❌ 金額格式不對，請輸入數字：")
+      return
+    }
+    sessions.set(chatId, { ...s, step: "confirm", amount: price })
+    const { kb, text: t } = confirmKeyboard(s.customer!, price)
+    await ctx.reply(t, { reply_markup: kb, parse_mode: "Markdown" })
+    return
+  }
+
+  // 快捷格式：「客戶 金額」
+  const i = text.lastIndexOf(" ")
+  if (i !== -1) {
+    const customer = text.slice(0, i).trim()
+    const price = Number(text.slice(i + 1).replace(/,/g, ""))
+    if (customer && Number.isFinite(price) && price > 0) {
+      const sender = ctx.from?.first_name ?? String(ctx.from?.id)
+      // 直接確認不走按鈕流程
+      sessions.set(chatId, { step: "confirm", sender, customer, amount: price })
+      const { kb, text: t } = confirmKeyboard(customer, price)
+      await ctx.reply(t, { reply_markup: kb, parse_mode: "Markdown" })
+      return
+    }
+  }
+
+  await ctx.reply("傳 /add 開始記帳，或輸入 `客戶名稱 金額`", { parse_mode: "Markdown" })
+})
+
+bot.start({ onStart: info => console.log(`🤖 @${info.username} 已啟動`) })
