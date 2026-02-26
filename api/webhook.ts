@@ -53,33 +53,61 @@ function buildSheets() {
   return google.sheets({ version: "v4", auth })
 }
 
-// 客戶清單（優先顯示最近記帳，再補完整名單）
-async function getCustomers(page = 0): Promise<{ names: string[]; total: number }> {
-  const PER_PAGE = 12
+// 最近 9 個不重複客戶（rich menu 用）
+async function getRecentCustomers(): Promise<string[]> {
   try {
-    const sheets = buildSheets()
-    // 從分類紀錄拉最近 100 筆，取不重複客戶（recency order）
-    const recent = await sheets.spreadsheets.values.get({
+    const res = await buildSheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CATEGORIZED}!D:D`,
-    }).catch(() => ({ data: { values: [] } }))
-    const recentNames = [...new Set(
-      (recent.data.values ?? []).map(r => String(r[0] ?? "").trim()).filter(Boolean).reverse()
-    )].slice(0, 20)
+    })
+    return [...new Set(
+      (res.data.values ?? []).map(r => String(r[0] ?? "").trim())
+        .filter(Boolean).reverse()
+    )].slice(0, 9)
+  } catch { return [] }
+}
 
-    // 完整客戶清單
-    const all = await sheets.spreadsheets.values.get({
+// 完整客戶清單（搜尋用）
+async function getAllCustomers(): Promise<string[]> {
+  try {
+    const res = await buildSheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CUSTOMERS}!A:A`,
     })
-    const allNames = (all.data.values ?? [])
+    return (res.data.values ?? [])
       .map(r => String(r[0] ?? "").trim())
       .filter(n => n && !/^(客戶|name)$/i.test(n))
+  } catch { return [] }
+}
 
-    // 合併：最近的優先，再補其他
-    const merged = [...new Set([...recentNames, ...allNames])]
-    const total = merged.length
-    const start = page * PER_PAGE
-    return { names: merged.slice(start, start + PER_PAGE), total }
-  } catch { return { names: [], total: 0 } }
+// 模糊比對
+function fuzzyMatch(query: string, names: string[]): string[] {
+  const q = query.trim()
+  if (!q) return []
+  // 完全包含優先，再放寬
+  const exact = names.filter(n => n.includes(q))
+  if (exact.length) return exact.slice(0, 8)
+  // 逐字元匹配
+  const chars = q.split("")
+  const partial = names.filter(n => chars.every(c => n.includes(c)))
+  return partial.slice(0, 8)
+}
+
+// 查某客戶最近使用的金額
+async function getRecentAmountsForCustomer(customer: string): Promise<number[]> {
+  try {
+    const res = await buildSheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CATEGORIZED}!A:E`,
+    })
+    const rows = (res.data.values ?? [])
+      .filter(r => String(r[3] ?? "").trim() === customer && r[4])
+      .slice(-20).reverse()
+    const amounts = [...new Set(rows.map(r => Number(r[4])).filter(n => n > 0))].slice(0, 4)
+    // 補預設金額
+    for (const a of AMOUNT_PRESETS) {
+      if (!amounts.includes(a)) amounts.push(a)
+      if (amounts.length >= 6) break
+    }
+    return amounts.slice(0, 6)
+  } catch { return AMOUNT_PRESETS.slice(0, 6) }
 }
 
 // UID → 暱稱對照（用於寫入 sheet）
@@ -192,40 +220,61 @@ function flexMsg(altText: string, contents: object): object {
   return { type: "flex", altText, contents }
 }
 
-// 客戶選單（含翻頁）
-function customerFlex(names: string[], page: number, total: number): object {
-  const PER_PAGE = 12
+// 客戶選單（最近 9 個 + 搜尋）
+function customerFlex(recents: string[]): object {
   const rows: object[] = []
-  for (let i = 0; i < names.length; i += 3) {
-    rows.push(row(...names.slice(i, i + 3).map(n => btn(n, `a=sel_c&c=${encodeURIComponent(n)}`))))
+  for (let i = 0; i < recents.length; i += 3) {
+    rows.push(row(...recents.slice(i, i + 3).map(n => btn(n, `a=sel_c&c=${encodeURIComponent(n)}`))))
   }
-  // 翻頁列
-  const navBtns: object[] = []
-  if (page > 0)
-    navBtns.push(btn(`◀ 上一頁`, `a=start&pg=${page - 1}`))
-  navBtns.push(btn("✏️ 自輸入", "a=custom_c"))
-  if ((page + 1) * PER_PAGE < total)
-    navBtns.push(btn(`下一頁 ▶`, `a=start&pg=${page + 1}`))
-  rows.push(row(...navBtns))
-
-  const pageInfo = total > PER_PAGE ? `（第 ${page + 1}/${Math.ceil(total / PER_PAGE)} 頁）` : ""
-  return flexMsg("選擇客戶", bubble(`👤 選擇客戶 ${pageInfo}`, rows))
+  // 搜尋按鈕（點了直接開鍵盤）
+  rows.push(row({
+    type: "button",
+    action: {
+      type: "postback",
+      label: "🔍 搜尋客戶",
+      data: "a=search_prompt",
+      inputOption: "openKeyboard",
+      fillInText: "",
+    },
+    style: "primary", color: "#1a8cff", height: "sm", flex: 1,
+  }))
+  const title = recents.length ? "👤 最近客戶 / 搜尋" : "👤 搜尋客戶"
+  return flexMsg("選擇客戶", bubble(title, rows))
 }
 
-// 金額選單
-function amountFlex(customer: string): object {
+// 搜尋結果
+function searchResultFlex(query: string, matches: string[]): object {
+  if (!matches.length) {
+    return flexMsg("找不到客戶", bubble(`🔍 「${query}」找不到結果`, [
+      { type: "text", text: "試試直接傳：客戶名稱 金額\n例如：宗原 500", size: "sm", color: "#888", wrap: true },
+      row(btn("↩️ 重新選", "a=start")),
+    ]))
+  }
+  const rows: object[] = []
+  for (let i = 0; i < matches.length; i += 3) {
+    rows.push(row(...matches.slice(i, i + 3).map(n => btn(n, `a=sel_c&c=${encodeURIComponent(n)}`))))
+  }
+  rows.push(row(btn("↩️ 重新選", "a=start")))
+  return flexMsg(`搜尋：${query}`, bubble(`🔍 「${query}」的結果`, rows))
+}
+
+// 金額選單（含該客戶歷史金額）
+function amountFlex(customer: string, amounts: number[]): object {
   const ce = encodeURIComponent(customer)
   const rows: object[] = []
-  for (let i = 0; i < AMOUNT_PRESETS.length; i += 3) {
-    rows.push(row(...AMOUNT_PRESETS.slice(i, i + 3).map(a =>
+  for (let i = 0; i < amounts.length; i += 3) {
+    rows.push(row(...amounts.slice(i, i + 3).map(a =>
       btn(`$${a.toLocaleString()}`, `a=sel_a&c=${ce}&p=${a}`)
     )))
   }
   rows.push(row(
-    btn("✏️ 自行輸入", `a=custom_a&c=${ce}`),
+    { type: "button",
+      action: { type: "postback", label: "✏️ 自行輸入", data: `a=custom_a&c=${ce}`,
+        inputOption: "openKeyboard", fillInText: "" },
+      style: "secondary", height: "sm", flex: 1 },
     btn("↩️ 換客戶", "a=start"),
   ))
-  return flexMsg("選擇金額", bubble(`📋 ${customer}\n💰 選擇金額`, rows))
+  return flexMsg("選擇金額", bubble(`📋 ${customer}　💰 選擇金額`, rows))
 }
 
 // 確認畫面
@@ -327,13 +376,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       switch (action) {
         case "start": {
-          const pg = Number(p.get("pg") ?? 0)
-          const { names, total } = await getCustomers(pg)
-          await replyLine(token, [customerFlex(names, pg, total)])
+          const recents = await getRecentCustomers()
+          await replyLine(token, [customerFlex(recents)])
           break
         }
         case "sel_c": {
-          await replyLine(token, [amountFlex(customer)])
+          const amounts = await getRecentAmountsForCustomer(customer)
+          await replyLine(token, [amountFlex(customer, amounts)])
+          break
+        }
+        case "search_prompt": {
+          // 鍵盤已自動開，給提示
+          await replyLine(token, [{ type: "text", text: "🔍 輸入客戶關鍵字搜尋" }])
           break
         }
         case "custom_c": {
@@ -380,8 +434,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 記帳 keyword → 顯示客戶選單
       if (text === "記帳" || text === "記帳！" || text === "/add") {
-        const { names, total } = await getCustomers(0)
-        await replyLine(token, [customerFlex(names, 0, total)])
+        const recents = await getRecentCustomers()
+        await replyLine(token, [customerFlex(recents)])
         continue
       }
 
@@ -396,14 +450,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      // 純數字 → 可能是 custom_a 後的金額輸入（無狀態，給提示）
+      // 純數字 → 提示
       if (/^\d[\d,]*$/.test(text)) {
         await replyLine(token, [{
-          type: "text",
-          text: "請用「客戶名稱 金額」格式，例如：\n台北科技 14600",
+          type: "text", text: "請用「客戶名稱 金額」格式\n例如：宗原 500",
         }])
         continue
       }
+
+      // 其他文字 → 模糊搜尋客戶
+      const allCusts = await getAllCustomers()
+      const matches = fuzzyMatch(text, allCusts)
+      await replyLine(token, [searchResultFlex(text, matches)])
     }
   }
 
