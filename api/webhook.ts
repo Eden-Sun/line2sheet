@@ -53,16 +53,33 @@ function buildSheets() {
   return google.sheets({ version: "v4", auth })
 }
 
-// 客戶清單（用於按鈕選單）
-async function getCustomers(): Promise<string[]> {
+// 客戶清單（優先顯示最近記帳，再補完整名單）
+async function getCustomers(page = 0): Promise<{ names: string[]; total: number }> {
+  const PER_PAGE = 12
   try {
-    const res = await buildSheets().spreadsheets.values.get({
+    const sheets = buildSheets()
+    // 從分類紀錄拉最近 100 筆，取不重複客戶（recency order）
+    const recent = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CATEGORIZED}!D:D`,
+    }).catch(() => ({ data: { values: [] } }))
+    const recentNames = [...new Set(
+      (recent.data.values ?? []).map(r => String(r[0] ?? "").trim()).filter(Boolean).reverse()
+    )].slice(0, 20)
+
+    // 完整客戶清單
+    const all = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CUSTOMERS}!A:A`,
     })
-    return (res.data.values ?? [])
+    const allNames = (all.data.values ?? [])
       .map(r => String(r[0] ?? "").trim())
       .filter(n => n && !/^(客戶|name)$/i.test(n))
-  } catch { return [] }
+
+    // 合併：最近的優先，再補其他
+    const merged = [...new Set([...recentNames, ...allNames])]
+    const total = merged.length
+    const start = page * PER_PAGE
+    return { names: merged.slice(start, start + PER_PAGE), total }
+  } catch { return { names: [], total: 0 } }
 }
 
 // UID → 暱稱對照（用於寫入 sheet）
@@ -175,14 +192,24 @@ function flexMsg(altText: string, contents: object): object {
   return { type: "flex", altText, contents }
 }
 
-// 客戶選單
-function customerFlex(names: string[]): object {
+// 客戶選單（含翻頁）
+function customerFlex(names: string[], page: number, total: number): object {
+  const PER_PAGE = 12
   const rows: object[] = []
   for (let i = 0; i < names.length; i += 3) {
     rows.push(row(...names.slice(i, i + 3).map(n => btn(n, `a=sel_c&c=${encodeURIComponent(n)}`))))
   }
-  rows.push(row(btn("✏️ 自行輸入", "a=custom_c")))
-  return flexMsg("選擇客戶", bubble("👤 選擇客戶", rows))
+  // 翻頁列
+  const navBtns: object[] = []
+  if (page > 0)
+    navBtns.push(btn(`◀ 上一頁`, `a=start&pg=${page - 1}`))
+  navBtns.push(btn("✏️ 自輸入", "a=custom_c"))
+  if ((page + 1) * PER_PAGE < total)
+    navBtns.push(btn(`下一頁 ▶`, `a=start&pg=${page + 1}`))
+  rows.push(row(...navBtns))
+
+  const pageInfo = total > PER_PAGE ? `（第 ${page + 1}/${Math.ceil(total / PER_PAGE)} 頁）` : ""
+  return flexMsg("選擇客戶", bubble(`👤 選擇客戶 ${pageInfo}`, rows))
 }
 
 // 金額選單
@@ -300,8 +327,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       switch (action) {
         case "start": {
-          const names = await getCustomers()
-          await replyLine(token, [customerFlex(names)])
+          const pg = Number(p.get("pg") ?? 0)
+          const { names, total } = await getCustomers(pg)
+          await replyLine(token, [customerFlex(names, pg, total)])
           break
         }
         case "sel_c": {
@@ -352,8 +380,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 記帳 keyword → 顯示客戶選單
       if (text === "記帳" || text === "記帳！" || text === "/add") {
-        const names = await getCustomers()
-        await replyLine(token, [customerFlex(names)])
+        const { names, total } = await getCustomers(0)
+        await replyLine(token, [customerFlex(names, 0, total)])
         continue
       }
 
