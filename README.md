@@ -89,15 +89,61 @@ GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
 PORT=3000
 ```
 
-### 2. 放入 Google Service Account
+### 2. 建立 Google Service Account 並下載金鑰
 
-從 [Google Cloud Console](https://console.cloud.google.com/) → IAM → Service Accounts → 建立 → 下載 JSON 金鑰
+Service Account 是讓程式代替「人」操作 Google API 的機器帳號，不需要瀏覽器登入。
+
+#### 步驟一：建立 GCP 專案（已有可跳過）
+
+1. 前往 [Google Cloud Console](https://console.cloud.google.com/)
+2. 左上角點 **選取專案 → 新增專案**，輸入名稱後建立
+
+#### 步驟二：啟用 Google Sheets API
+
+1. 左側選單 → **API 和服務 → 程式庫**
+2. 搜尋「Google Sheets API」→ 點進去 → **啟用**
+
+#### 步驟三：建立 Service Account
+
+1. 左側選單 → **IAM 與管理 → 服務帳號**
+2. 上方點 **+ 建立服務帳號**
+3. 填入名稱（例：`line2sheet`），點 **建立並繼續**
+4. 角色選 **「編輯者」** 或跳過（這裡的角色是 GCP 內部權限，不影響 Sheet）
+5. 點 **完成**
+
+#### 步驟四：下載 JSON 金鑰
+
+1. 在服務帳號清單找到剛建立的帳號，點右側 **⋮ → 管理金鑰**
+2. **新增金鑰 → 建立新金鑰 → JSON** → 點 **建立**
+3. 瀏覽器自動下載一個 `.json` 檔（例：`line2sheet-abc123.json`）
 
 ```bash
-mv ~/Downloads/xxx.json /home/r7/line2sheet/service-account.json
+mv ~/Downloads/line2sheet-abc123.json /home/r7/line2sheet/service-account.json
 ```
 
-把 service account 的 email 加入 Google Sheet **共用編輯者**。
+JSON 內容長這樣（不要外洩）：
+
+```json
+{
+  "type": "service_account",
+  "project_id": "your-project-id",
+  "private_key_id": "...",
+  "private_key": "-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n",
+  "client_email": "line2sheet@your-project-id.iam.gserviceaccount.com",
+  "client_id": "...",
+  ...
+}
+```
+
+#### 步驟五：把 Service Account 加入 Google Sheet
+
+> ⚠️ 這步最容易忘，忘了會寫入失敗（403 錯誤）
+
+1. 打開你要寫入的 Google Sheet
+2. 右上角點 **共用**
+3. 在「新增對象」欄貼上 service-account.json 裡的 **`client_email`** 值
+   （例：`line2sheet@your-project-id.iam.gserviceaccount.com`）
+4. 權限選 **「編輯者」** → 點 **共用**
 
 ### 3. LINE Developers 設定
 
@@ -121,7 +167,19 @@ mv ~/Downloads/xxx.json /home/r7/line2sheet/service-account.json
 | `SHEET_NAME` | 工作表名稱（預設 Sheet1） |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | service-account.json 的**完整 JSON 內容**（貼上整個 JSON 字串） |
 
-> ⚠️ `GOOGLE_SERVICE_ACCOUNT_JSON` 是 JSON 字串，不是檔案路徑。打開 service-account.json，全選複製，直接貼到 Vercel env value 欄位。
+> ⚠️ **`GOOGLE_SERVICE_ACCOUNT_JSON` 填法**
+>
+> Vercel 上沒有檔案系統，不能放 `.json` 檔，改用環境變數傳入整個 JSON 內容：
+>
+> 1. 用文字編輯器打開 `service-account.json`
+> 2. **全選（Ctrl+A）→ 複製（Ctrl+C）**
+> 3. 貼到 Vercel 的 `GOOGLE_SERVICE_ACCOUNT_JSON` 欄位 value 裡
+>
+> 貼進去的值會是一大段 JSON，開頭像這樣：
+> ```
+> {"type":"service_account","project_id":"your-project",...}
+> ```
+> 不需要加引號或做任何修改，直接貼原始內容就好。
 
 #### 如何取得 SPREADSHEET_ID
 
