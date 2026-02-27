@@ -22,7 +22,7 @@ const AMOUNT_PRESETS = (process.env.AMOUNT_PRESETS ?? "1000,3000,5000,8000,10000
 // ── LINE API ───────────────────────────────────────────────────────────────
 
 async function replyLine(replyToken: string, messages: object[]) {
-  await fetch("https://api.line.me/v2/bot/message/reply", {
+  const r = await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}`,
@@ -30,6 +30,22 @@ async function replyLine(replyToken: string, messages: object[]) {
     },
     body: JSON.stringify({ replyToken, messages }),
   })
+  if (!r.ok) {
+    const body = await r.text().catch(() => "(unreadable)")
+    console.error(`[replyLine] ${r.status} ${r.statusText}: ${body}`)
+  }
+}
+
+// 顯示載入動畫（立即視覺回饋）
+async function sendLoading(chatId: string, seconds = 10) {
+  await fetch("https://api.line.me/v2/bot/chat/loading/start", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ chatId, loadingSeconds: seconds }),
+  }).catch(() => {}) // non-critical, ignore errors
 }
 
 async function getDisplayName(userId: string): Promise<string> {
@@ -366,6 +382,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   for (const event of events) {
     const token  = event.replyToken
     const userId = event.source?.userId ?? ""
+    console.log(`[event] type=${event.type} userId=${userId} action=${event.postback?.data ?? event.message?.text ?? ""}`)
+
+    try {
 
     // ── POSTBACK ───────────────────────────────────────────────────────
     if (event.type === "postback") {
@@ -376,11 +395,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       switch (action) {
         case "start": {
+          sendLoading(userId) // immediate visual feedback
           const recents = await getRecentCustomers()
           await replyLine(token, [customerFlex(recents)])
           break
         }
         case "sel_c": {
+          sendLoading(userId)
           const amounts = await getRecentAmountsForCustomer(customer)
           await replyLine(token, [amountFlex(customer, amounts)])
           break
@@ -405,6 +426,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           break
         }
         case "record": {
+          sendLoading(userId)
           const nickname = await getNickname(userId)
           try {
             const { date, time } = await writeRecord(userId, nickname, customer, price)
@@ -416,6 +438,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           break
         }
         case "recent": {
+          sendLoading(userId)
           const recentMsg = await buildRecentFlex()
           await replyLine(token, [recentMsg])
           break
@@ -434,6 +457,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // 記帳 keyword → 顯示客戶選單
       if (text === "記帳" || text === "記帳！" || text === "/add") {
+        sendLoading(userId)
         const recents = await getRecentCustomers()
         await replyLine(token, [customerFlex(recents)])
         continue
@@ -459,9 +483,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 其他文字 → 模糊搜尋客戶
+      sendLoading(userId)
       const allCusts = await getAllCustomers()
       const matches = fuzzyMatch(text, allCusts)
       await replyLine(token, [searchResultFlex(text, matches)])
+    }
+
+    } catch (e: any) {
+      console.error(`[event error] type=${event.type} action=${event.postback?.data ?? ""}`, e)
+      if (token) {
+        await replyLine(token, [{ type: "text", text: "❌ 系統錯誤，請稍後再試" }]).catch(() => {})
+      }
     }
   }
 
