@@ -9,10 +9,10 @@ export const config = { api: { bodyParser: false } }
 const CHANNEL_SECRET       = process.env.LINE_CHANNEL_SECRET!
 const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN!
 const SPREADSHEET_ID       = process.env.SPREADSHEET_ID!
-const SHEET_RAW            = process.env.SHEET_NAME        ?? "Sheet1"
-const SHEET_CATEGORIZED    = process.env.SHEET_CATEGORIZED ?? "分類紀錄"
-const SHEET_ROSTER         = process.env.SHEET_ROSTER      ?? "名單"
-const SHEET_CUSTOMERS      = process.env.SHEET_CUSTOMERS   ?? "客戶"
+const SHEET_RAW            = process.env.SHEET_NAME?.trim()        || "Sheet1"
+const SHEET_CATEGORIZED    = process.env.SHEET_CATEGORIZED?.trim() || "分類紀錄"
+const SHEET_ROSTER         = process.env.SHEET_ROSTER?.trim()      || "名單"
+const SHEET_CUSTOMERS      = process.env.SHEET_CUSTOMERS?.trim()   || "客戶"
 const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON!
 
 // Amount preset buttons (3 per row)
