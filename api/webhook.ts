@@ -69,8 +69,19 @@ function buildSheets() {
   return google.sheets({ version: "v4", auth })
 }
 
-// 最近 9 個不重複客戶（rich menu 用）
+// 讀取客戶清單（從「客戶」sheet，若無則 fallback 讀歷史紀錄）
 async function getRecentCustomers(): Promise<string[]> {
+  try {
+    // 優先讀「客戶」sheet
+    const res = await buildSheets().spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CUSTOMERS}!A:A`,
+    })
+    const customers = (res.data.values ?? [])
+      .map(r => String(r[0] ?? "").trim())
+      .filter(n => n && !/^(客戶|name|客戶名稱|客户)$/i.test(n))
+    if (customers.length > 0) return customers.slice(0, 9)
+  } catch {}
+  // fallback：讀歷史紀錄
   try {
     const res = await buildSheets().spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID, range: `${SHEET_CATEGORIZED}!D:D`,
@@ -90,7 +101,7 @@ async function getAllCustomers(): Promise<string[]> {
     })
     return (res.data.values ?? [])
       .map(r => String(r[0] ?? "").trim())
-      .filter(n => n && !/^(客戶|name)$/i.test(n))
+      .filter(n => n && !/^(客戶|name|客戶名稱|客户)$/i.test(n))
   } catch { return [] }
 }
 
