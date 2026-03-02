@@ -58,6 +58,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const sender = String(body.sender ?? "")
   const customer = String(body.customer ?? "")
   const amount = body.amount
+  const paymentStatus = String(body.paymentStatus ?? "")
 
   if (FORM_TOKEN && token !== FORM_TOKEN)
     return wantsHtml(req)
@@ -67,6 +68,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return wantsHtml(req)
       ? res.status(400).setHeader("Content-Type", "text/html; charset=utf-8").send("<h1>Invalid input</h1>")
       : res.status(400).json({ ok: false, error: "Invalid input" })
+  if (!paymentStatus || (paymentStatus !== "已收" && paymentStatus !== "未收"))
+    return wantsHtml(req)
+      ? res.status(400).setHeader("Content-Type", "text/html; charset=utf-8").send("<h1>請選擇收款狀態</h1>")
+      : res.status(400).json({ ok: false, error: "請選擇收款狀態" })
 
   const now  = new Date(Date.now() + 8 * 3600_000)  // Taiwan time
   const date = now.toISOString().slice(0, 10)
@@ -78,25 +83,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const sheets = buildSheets()
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_RAW}!A:E`,
+      range: `${SHEET_RAW}!A:F`,
       valueInputOption: "USER_ENTERED",
-      requestBody: { values: [[date, time, `form:${name}`, customer.trim(), price]] },
+      requestBody: { values: [[date, time, `form:${name}`, customer.trim(), price, paymentStatus]] },
     })
     await sheets.spreadsheets.values.append({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${SHEET_CATEGORIZED}!A:E`,
+      range: `${SHEET_CATEGORIZED}!A:F`,
       valueInputOption: "USER_ENTERED",
-      requestBody: { values: [[date, time, name, customer.trim(), price]] },
+      requestBody: { values: [[date, time, name, customer.trim(), price, paymentStatus]] },
     })
-    console.log(`✅ [form] ${date} ${time} | ${name} → ${customer} $${price}`)
-    const payload = { ok: true, date, time, name, customer: customer.trim(), amount: price }
+    console.log(`✅ [form] ${date} ${time} | ${name} → ${customer} $${price} [${paymentStatus}]`)
+    const payload = { ok: true, date, time, name, customer: customer.trim(), amount: price, paymentStatus }
     if (!wantsHtml(req)) return res.status(200).json(payload)
     return res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(`<!DOCTYPE html>
 <html lang="zh-TW">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>記帳完成</title></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:24px">
   <h1 style="color:#06c755;font-size:24px;margin-bottom:10px">記帳成功</h1>
-  <p style="font-size:16px;margin:0 0 18px">${escHtml(customer)} $${price.toLocaleString()}</p>
+  <p style="font-size:16px;margin:0 0 6px">${escHtml(customer)} $${price.toLocaleString()}</p>
+  <p style="font-size:14px;margin:0 0 18px;color:#666">收款狀態：${escHtml(paymentStatus)}</p>
   <button onclick="history.back()" style="padding:10px 14px;border:none;border-radius:10px;background:#06c755;color:#fff;font-size:16px">返回表單</button>
 </body>
 </html>`)

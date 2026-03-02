@@ -11,6 +11,8 @@
   let senderReadonly = Boolean(CONFIG.senderReadonly)
   let customer = load('last_customer', '')
   let amount = ''
+  let paymentStatus = ''
+  let showValidation = false
 
   let remoteCustomers = []
   let storedCustomers = load('customers', [])
@@ -135,13 +137,18 @@
       toast('請填寫正確金額', true)
       return
     }
+    if (!paymentStatus) {
+      showValidation = true
+      toast('請選擇收款狀態', true)
+      return
+    }
 
     loading = true
     try {
       const res = await fetch('/api/record', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: TOKEN, sender: senderName, customer: customerName, amount: price })
+        body: JSON.stringify({ token: TOKEN, sender: senderName, customer: customerName, amount: price, paymentStatus })
       })
       const data = await res.json()
       if (!data.ok) throw new Error(data.error || '提交失敗')
@@ -154,13 +161,16 @@
         time: data.time,
         name: senderName,
         customer: customerName,
-        amount: price
+        amount: price,
+        paymentStatus
       }
 
       rememberAmount(customerName, price)
       addRecentRecord(entry)
       customer = ''
       amount = ''
+      paymentStatus = ''
+      showValidation = false
       toast(`✅ ${customerName} $${price.toLocaleString()} 已記帳`) 
     } catch (e) {
       toast(`送出失敗：${e.message || '未知錯誤'}`, true)
@@ -202,6 +212,23 @@
         />
 
         <AmountInput bind:value={amount} {customer} recentAmounts={recentAmounts} />
+
+        <div class="payment-status">
+          <label>收款狀態 <span class="required">*</span></label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="paymentStatus" value="已收" bind:group={paymentStatus} required />
+              <span class="radio-label">已收</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="paymentStatus" value="未收" bind:group={paymentStatus} required />
+              <span class="radio-label">未收</span>
+            </label>
+          </div>
+          {#if !paymentStatus && showValidation}
+            <p class="validation-error">請選擇收款狀態</p>
+          {/if}
+        </div>
       </div>
 
       <button type="submit" disabled={loading}>{loading ? '送出中…' : '送出記帳'}</button>
@@ -325,5 +352,69 @@
 
   .toast.error {
     background: #c5332b;
+  }
+
+  .payment-status {
+    margin-top: 8px;
+  }
+
+  .payment-status > label {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: #1c1c1e;
+    margin-bottom: 10px;
+  }
+
+  .payment-status .required {
+    color: #ff3b30;
+    margin-left: 4px;
+  }
+
+  .radio-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .radio-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 2px solid #e5e5ea;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: #fff;
+  }
+
+  .radio-option:hover {
+    border-color: #06c755;
+  }
+
+  .radio-option:has(input:checked) {
+    border-color: #06c755;
+    background: #eaf9ef;
+  }
+
+  .radio-option input {
+    width: 20px;
+    height: 20px;
+    accent-color: #06c755;
+    cursor: pointer;
+  }
+
+  .radio-label {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1c1c1e;
+    flex: 1;
+  }
+
+  .validation-error {
+    color: #ff3b30;
+    font-size: 13px;
+    margin: 8px 0 0;
   }
 </style>
