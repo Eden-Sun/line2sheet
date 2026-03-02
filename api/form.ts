@@ -58,32 +58,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   .field input,.field select{flex:1;border:none;outline:none;font-size:16px;color:var(--text);background:transparent;text-align:right;min-width:0}
   .field input::placeholder{color:var(--sub)}
   .field .prefix{color:var(--sub);font-size:16px;margin-left:4px}
-  .customer-field{position:relative}
   .customer-control{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
   .customer-control input{text-align:left}
-  .pick-btn{border:none;background:#eaf9ef;color:var(--green-dark);font-size:14px;font-weight:700;padding:10px 12px;border-radius:10px;cursor:pointer;flex:0 0 auto;display:none}
+  .pick-btn{border:none;background:#eaf9ef;color:var(--green-dark);font-size:14px;font-weight:700;padding:10px 12px;border-radius:10px;cursor:pointer;flex:0 0 auto}
   .pick-btn:active{transform:scale(.98)}
-  .js .pick-btn{display:block}
-  .js #customer{cursor:pointer}
-  .customer-picker{position:fixed;inset:0;z-index:120;display:none}
-  .customer-picker.open{display:block}
-  .customer-picker-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.24);opacity:0;transition:opacity .22s}
-  .customer-picker-panel{position:absolute;left:0;right:0;bottom:0;max-height:min(76dvh,640px);background:#fff;border-radius:20px 20px 0 0;padding:14px 14px calc(20px + env(safe-area-inset-bottom));transform:translateY(20px);opacity:0;transition:transform .24s ease,opacity .24s ease;display:flex;flex-direction:column;gap:10px}
-  .customer-picker.open .customer-picker-backdrop{opacity:1}
-  .customer-picker.open .customer-picker-panel{transform:translateY(0);opacity:1}
-  .picker-head{display:flex;align-items:center;justify-content:space-between;padding:2px 4px}
-  .picker-title{font-size:16px;font-weight:700;color:var(--text)}
-  .picker-close{border:none;background:#f2f2f7;color:var(--text);font-size:14px;font-weight:600;padding:8px 12px;border-radius:10px;cursor:pointer}
-  .picker-search{border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:16px;outline:none}
-  .picker-search:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(6,199,85,.12)}
-  .picker-list{overflow:auto;padding:2px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-  .picker-card{border:1px solid var(--border);background:#fff;border-radius:12px;min-height:52px;padding:10px 8px;font-size:14px;font-weight:600;color:var(--text);text-align:center;cursor:pointer;transition:all .15s;word-break:break-word}
-  .picker-card:active{transform:scale(.97)}
-  .picker-card.selected{background:#eaf9ef;border-color:var(--green);color:var(--green-dark)}
-  .picker-empty{grid-column:1 / -1;padding:16px 8px;text-align:center;color:var(--sub);font-size:14px}
-  @media (min-width:640px){
-    .picker-list{grid-template-columns:repeat(4,minmax(0,1fr))}
-  }
   .btn{display:block;width:100%;padding:15px;border:none;border-radius:14px;background:var(--green);color:#fff;font-size:17px;font-weight:700;cursor:pointer;transition:background .15s,transform .1s}
   .btn:active{background:var(--green-dark);transform:scale(.98)}
   .btn:disabled{background:#ccc;cursor:not-allowed;transform:none}
@@ -144,22 +122,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   </div>
 </main>
 
-<div class="customer-picker" id="customer-picker" aria-hidden="true">
-  <div class="customer-picker-backdrop" id="picker-backdrop"></div>
-  <div class="customer-picker-panel" role="dialog" aria-modal="true" aria-label="客戶選單">
-    <div class="picker-head">
-      <div class="picker-title">選擇客戶</div>
-      <button type="button" class="picker-close" id="picker-close">關閉</button>
-    </div>
-    <input id="picker-search" class="picker-search" type="text" placeholder="搜尋客戶名稱" autocomplete="off" />
-    <div class="picker-list" id="picker-list"></div>
-  </div>
-</div>
-
 <div class="toast" id="toast"></div>
 
 <script>
-document.documentElement.classList.add('js')
 const TOKEN = "${FORM_TOKEN}"
 const API   = "/api/record"
 const CUSTOMER_API = "/api/customers"
@@ -176,11 +141,6 @@ const $customer = document.getElementById('customer')
 const $amount   = document.getElementById('amount')
 const $btn      = document.getElementById('btn')
 const $pickOpen = document.getElementById('pick-open')
-const $picker = document.getElementById('customer-picker')
-const $pickerBackdrop = document.getElementById('picker-backdrop')
-const $pickerClose = document.getElementById('picker-close')
-const $pickerSearch = document.getElementById('picker-search')
-const $pickerList = document.getElementById('picker-list')
 const $datalist = document.getElementById('customer-list')
 
 let localRecords = load('session_records', [])
@@ -189,10 +149,8 @@ let customerRecentAmounts = load('customer_recent_amounts', {})
 $sender.value = load('sender','') || "${senderValue}"
 if ("${senderValue}") $sender.setAttribute('readonly', true)
 $customer.value = load('last_customer','')
-$customer.setAttribute('readonly', 'readonly')
 let remoteCustomers = []
 let allCustomers = []
-let pickerOpen = false
 
 function uniqueCustomers(items){
   const seen = new Set()
@@ -234,81 +192,20 @@ function getAllCustomers(){
   return uniqueCustomers([...recents, ...remoteCustomers])
 }
 
-function refreshDatalist(){
+function refreshDatalist(query = ''){
   allCustomers = getAllCustomers()
-  $datalist.innerHTML = allCustomers.map(c=>\`<option value="\${esc(c)}">\`).join('')
+  const q = String(query ?? '').trim().toLowerCase()
+  const filtered = !q ? allCustomers : allCustomers.filter(name => name.toLowerCase().includes(q))
+  $datalist.innerHTML = filtered.map(c=>\`<option value="\${esc(c)}">\`).join('')
 }
 
-function selectCustomer(name){
-  const customer = String(name ?? '').trim()
-  if(!customer) return
-  $customer.value = customer
-  save('last_customer', customer)
-  prefillAmount(customer)
-  closePicker()
-  $amount.focus()
-}
-
-function renderPickerList(){
-  const query = $pickerSearch.value.trim()
-  const q = query.toLowerCase()
-  const list = !q ? allCustomers : allCustomers.filter(name => name.toLowerCase().includes(q))
-
-  $pickerList.innerHTML = ''
-
-  if(query && !allCustomers.includes(query)){
-    const custom = document.createElement('button')
-    custom.type = 'button'
-    custom.className = 'picker-card'
-    custom.textContent = '使用「' + query + '」'
-    custom.addEventListener('click', () => selectCustomer(query))
-    $pickerList.appendChild(custom)
+function onCustomerInput(){
+  const customer = $customer.value.trim()
+  refreshDatalist(customer)
+  if(allCustomers.includes(customer)){
+    save('last_customer', customer)
+    prefillAmount(customer)
   }
-
-  if(!list.length && !query){
-    const empty = document.createElement('div')
-    empty.className = 'picker-empty'
-    empty.textContent = '尚無客戶資料'
-    $pickerList.appendChild(empty)
-    return
-  }
-
-  if(!list.length && query){
-    const empty = document.createElement('div')
-    empty.className = 'picker-empty'
-    empty.textContent = '找不到符合的客戶'
-    $pickerList.appendChild(empty)
-    return
-  }
-
-  const selected = $customer.value.trim()
-  for(const name of list){
-    const card = document.createElement('button')
-    card.type = 'button'
-    card.className = 'picker-card' + (name === selected ? ' selected' : '')
-    card.textContent = name
-    card.addEventListener('click', () => selectCustomer(name))
-    $pickerList.appendChild(card)
-  }
-}
-
-function openPicker(){
-  if(pickerOpen) return
-  pickerOpen = true
-  $picker.classList.add('open')
-  $picker.setAttribute('aria-hidden', 'false')
-  $pickerSearch.value = ''
-  renderPickerList()
-  document.body.style.overflow = 'hidden'
-  setTimeout(() => $pickerSearch.focus(), 10)
-}
-
-function closePicker(){
-  if(!pickerOpen) return
-  pickerOpen = false
-  $picker.classList.remove('open')
-  $picker.setAttribute('aria-hidden', 'true')
-  document.body.style.overflow = ''
 }
 refreshDatalist()
 
@@ -323,16 +220,14 @@ async function fetchCustomers(){
     remoteCustomers = []
   }finally{
     refreshDatalist()
-    renderPickerList()
   }
 }
 fetchCustomers()
 
-$pickOpen.addEventListener('click', openPicker)
-$customer.addEventListener('click', openPicker)
-$pickerClose.addEventListener('click', closePicker)
-$pickerBackdrop.addEventListener('click', closePicker)
-$pickerSearch.addEventListener('input', renderPickerList)
+$pickOpen.addEventListener('click', () => $customer.focus())
+$customer.addEventListener('focus', () => refreshDatalist())
+$customer.addEventListener('input', onCustomerInput)
+$customer.addEventListener('change', onCustomerInput)
 
 // ── Toast ────────────────────────────────────────────────────
 function toast(msg, isError=false){
@@ -419,14 +314,6 @@ function renderRecent(){
 }
 
 renderRecent()
-
-// ── Keyboard ─────────────────────────────────────────────────
-document.addEventListener('keydown', e => {
-  if(e.key === 'Escape' && pickerOpen){
-    closePicker()
-    $customer.focus()
-  }
-})
 
 $form.addEventListener('submit', async (e) => {
   e.preventDefault()
