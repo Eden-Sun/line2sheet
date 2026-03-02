@@ -90,6 +90,7 @@ export default function handler(_req: VercelRequest, res: VercelResponse) {
 <script>
 const TOKEN = "${FORM_TOKEN}"
 const API   = "/api/record"
+const CUSTOMER_API = "/api/customers"
 
 // ── localStorage helpers ─────────────────────────────────────
 function save(k,v){ try{localStorage.setItem(k,JSON.stringify(v))}catch(_){} }
@@ -103,14 +104,43 @@ const $btn      = document.getElementById('btn')
 
 $sender.value = load('sender','')
 $customer.value = load('last_customer','')
+let remoteCustomers = []
+
+function uniqueCustomers(items){
+  const seen = new Set()
+  const out = []
+  for(const item of items){
+    const name = String(item ?? '').trim()
+    if(!name || seen.has(name)) continue
+    seen.add(name)
+    out.push(name)
+  }
+  return out
+}
 
 // Populate customer datalist from recents
 function refreshDatalist(){
   const recents = load('customers',[])
   const dl = document.getElementById('customer-list')
-  dl.innerHTML = recents.map(c=>\`<option value="\${c}">\`).join('')
+  const customers = uniqueCustomers([...recents, ...remoteCustomers])
+  dl.innerHTML = customers.map(c=>\`<option value="\${esc(c)}">\`).join('')
 }
 refreshDatalist()
+
+async function fetchCustomers(){
+  try{
+    const r = await fetch(CUSTOMER_API)
+    if(!r.ok) throw new Error('HTTP ' + r.status)
+    const data = await r.json()
+    remoteCustomers = Array.isArray(data) ? data : []
+  }catch(e){
+    console.error('load customers failed', e)
+    remoteCustomers = []
+  }finally{
+    refreshDatalist()
+  }
+}
+fetchCustomers()
 
 // ── Toast ────────────────────────────────────────────────────
 function toast(msg, isError=false){
@@ -144,7 +174,7 @@ async function submit(){
     const data = await r.json()
     if(!data.ok) throw new Error(data.error ?? '未知錯誤')
 
-    toast(\`✅ \${customer} \${\${(+amount).toLocaleString()}} 已記帳！\`)
+    toast(\`✅ \${customer} $\${(+amount).toLocaleString()} 已記帳！\`)
     save('sender', sender)
     save('last_customer','')
 

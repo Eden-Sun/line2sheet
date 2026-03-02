@@ -248,20 +248,19 @@ function flexMsg(altText: string, contents: object): object {
 }
 
 // 客戶選單（最近 9 個 + 搜尋）
-function customerFlex(recents: string[]): object {
+function customerFlex(userId: string, recents: string[]): object {
   const rows: object[] = []
   for (let i = 0; i < recents.length; i += 3) {
     rows.push(row(...recents.slice(i, i + 3).map(n => btn(n, `a=sel_c&c=${encodeURIComponent(n)}`))))
   }
-  // 搜尋按鈕（點了直接開鍵盤）
+  const formUrl = `https://line2sheet.vercel.app/form?userId=${encodeURIComponent(userId)}`
+  // 搜尋按鈕（開啟外部表單）
   rows.push(row({
     type: "button",
     action: {
-      type: "postback",
+      type: "uri",
       label: "🔍 搜尋客戶",
-      data: "a=search_prompt",
-      inputOption: "openKeyboard",
-      fillInText: "搜尋客戶名稱",
+      uri: formUrl,
     },
     style: "primary", color: "#1a8cff", height: "sm", flex: 1,
   }))
@@ -408,7 +407,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         case "start": {
           sendLoading(userId) // immediate visual feedback
           const recents = await getRecentCustomers()
-          await replyLine(token, [customerFlex(recents)])
+          await replyLine(token, [customerFlex(userId, recents)])
           break
         }
         case "sel_c": {
@@ -470,7 +469,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (text === "記帳" || text === "記帳！" || text === "/add") {
         sendLoading(userId)
         const recents = await getRecentCustomers()
-        await replyLine(token, [customerFlex(recents)])
+        await replyLine(token, [customerFlex(userId, recents)])
         continue
       }
 
