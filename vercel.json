@@ -1,4 +1,6 @@
 {
+  "installCommand": "bun install",
+  "buildCommand": "bun run build",
   "functions": {
     "api/webhook.ts": { "maxDuration": 30 },
     "api/health.ts":  { "maxDuration": 5  }

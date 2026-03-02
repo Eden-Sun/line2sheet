@@ -79,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (error: any) {
     console.error("[form] failed to load dist/index.html:", error?.message)
     return res.status(500).setHeader("Content-Type", "text/plain; charset=utf-8").send(
-      "Frontend not built. Run `npm run build` to generate dist/index.html.",
+      "Frontend not built. Run `bun run build` to generate dist/index.html.",
     )
   }
 }
