@@ -253,7 +253,7 @@ function customerFlex(userId: string, recents: string[]): object {
   for (let i = 0; i < recents.length; i += 3) {
     rows.push(row(...recents.slice(i, i + 3).map(n => btn(n, `a=sel_c&c=${encodeURIComponent(n)}`))))
   }
-  const formUrl = `https://line2sheet.vercel.app/form?userId=${encodeURIComponent(userId)}`
+  const formUrl = `https://line2sheet.vercel.app/api/form?userId=${encodeURIComponent(userId)}`
   // 搜尋按鈕（開啟外部表單）
   rows.push(row({
     type: "button",
