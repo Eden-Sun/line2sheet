@@ -1,8 +1,37 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node"
+import { google } from "googleapis"
 
 const FORM_TOKEN = process.env.FORM_TOKEN ?? ""
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID
+const SHEET_ROSTER = process.env.SHEET_ROSTER?.trim() || "名單"
+const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
 
-export default function handler(_req: VercelRequest, res: VercelResponse) {
+async function getNickname(userId: string): Promise<string | null> {
+  if (!SERVICE_ACCOUNT_JSON || !SPREADSHEET_ID) return null
+  try {
+    const auth = new google.auth.GoogleAuth({
+      credentials: JSON.parse(SERVICE_ACCOUNT_JSON),
+      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    })
+    const sheets = google.sheets({ version: "v4", auth })
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_ROSTER}!A:B`,
+    })
+    const row = (res.data.values ?? []).find(r => r[0]?.trim() === userId)
+    return row?.[1]?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const userId = (req.query.userId as string) || ""
+  const nickname = userId ? await getNickname(userId) : null
+  const senderValue = nickname || ""
+  const senderReadonly = nickname ? "readonly" : ""
+  const senderStyle = nickname ? "style=\"background:#f2f2f7;color:#8e8e93;\"" : ""
+  
   res.setHeader("Content-Type", "text/html; charset=utf-8")
   res.send(`<!DOCTYPE html>
 <html lang="zh-TW">
@@ -62,7 +91,7 @@ export default function handler(_req: VercelRequest, res: VercelResponse) {
   <div class="card">
     <div class="field">
       <label>姓名</label>
-      <input id="sender" type="text" placeholder="你的名字" autocomplete="off" />
+      <input id="sender" type="text" placeholder="你的名字" autocomplete="off" value="${senderValue}" ${senderReadonly} ${senderStyle} />
     </div>
     <div class="field">
       <label>客戶</label>
@@ -102,7 +131,8 @@ const $customer = document.getElementById('customer')
 const $amount   = document.getElementById('amount')
 const $btn      = document.getElementById('btn')
 
-$sender.value = load('sender','')
+$sender.value = load('sender','') || "${senderValue}"
+if ("${senderValue}") $sender.setAttribute('readonly', true)
 $customer.value = load('last_customer','')
 let remoteCustomers = []
 

@@ -405,9 +405,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       switch (action) {
         case "start": {
-          sendLoading(userId) // immediate visual feedback
-          const recents = await getRecentCustomers()
-          await replyLine(token, [customerFlex(userId, recents)])
+          sendLoading(userId)
+          const formUrl = `https://line2sheet.vercel.app/api/form?userId=${encodeURIComponent(userId)}`
+          await replyLine(token, [{ type: "text", text: "請使用下方表單記帳：" }, { type: "text", text: formUrl }])
           break
         }
         case "sel_c": {
@@ -465,11 +465,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (event.type === "message" && event.message?.type === "text") {
       const text = event.message.text.trim()
 
-      // 記帳 keyword → 顯示客戶選單
+      // 記帳 keyword → 開外部表單
       if (text === "記帳" || text === "記帳！" || text === "/add") {
         sendLoading(userId)
-        const recents = await getRecentCustomers()
-        await replyLine(token, [customerFlex(userId, recents)])
+        const formUrl = `https://line2sheet.vercel.app/api/form?userId=${encodeURIComponent(userId)}`
+        await replyLine(token, [{ type: "text", text: "請使用下方表單記帳：" }, { type: "text", text: formUrl }])
         continue
       }
 
