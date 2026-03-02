@@ -1,9 +1,9 @@
 /**
- * LINE Rich Menu 設定腳本
+ * LINE Rich Menu 設定腳本（兩欄版）
  * Usage: CHANNEL_ACCESS_TOKEN=xxx node scripts/setup-richmenu.mjs
  *
- * 版面：三欄等寬
- *  [📦 記帳] [📋 最近紀錄] [🔍 搜尋客戶]
+ * 版面：兩欄等寬
+ *  [📦 記帳] [📋 最近紀錄]
  */
 
 import { createCanvas, GlobalFonts } from "@napi-rs/canvas"
@@ -24,7 +24,7 @@ if (!TOKEN) {
 GlobalFonts.registerFromPath(join(__dir, "fonts/NotoSansCJK-Bold.otf"), "NotoSansCJK")
 
 // ── 1. 生成圖片 ─────────────────────────────────────────────────────────────
-// LINE Rich Menu 標準尺寸 2500x843 (半螢幕)，三欄等寬
+// LINE Rich Menu 標準尺寸 2500x843 (半螢幕)，兩欄等寬
 
 // ── 向量 Icon 繪製 ────────────────────────────────────────────────────────────
 // 每個 icon 接受 (ctx, cx, cy, size, color) 並自行繪製
@@ -48,73 +48,57 @@ function iconList(c, cx, cy, r, color) {
   }
 }
 
-function iconSearch(c, cx, cy, r, color) {
-  // 放大鏡（圓圈 + 把手）
-  c.strokeStyle = color; c.lineWidth = r * 0.13; c.lineCap = "round"
-  const cr = r * 0.58
-  const lx = cx - r * 0.18, ly = cy - r * 0.18   // 圓心偏左上
-  c.beginPath(); c.arc(lx, ly, cr, 0, Math.PI * 2); c.stroke()
-  // 把手（從右下角往右下延伸）
-  const angle = Math.PI / 4
-  const hx1 = lx + cr * Math.cos(angle), hy1 = ly + cr * Math.sin(angle)
-  const hx2 = lx + (cr + r * 0.55) * Math.cos(angle)
-  const hy2 = ly + (cr + r * 0.55) * Math.sin(angle)
-  c.beginPath(); c.moveTo(hx1, hy1); c.lineTo(hx2, hy2); c.stroke()
-}
-
 function drawImage() {
   const W = 2500, H = 843
-  const COL = Math.round(W / 3)
+  const COL = Math.round(W / 2)  // 兩欄
   const canvas = createCanvas(W, H)
   const c = canvas.getContext("2d")
 
-  const ICON_R = 110
-  const PAD_X  = 28   // 欄間距（水平）
+  const ICON_R = 130  // 圖標大一點（兩欄空間更大）
+  const PAD_X  = 40   // 欄間距（水平）
   const PAD_Y  = 28   // 上下邊距
   const RADIUS = 36   // 圓角
-  const STEP   = 22   // 3D 底座厚度（模擬物理按鍵深度）
+  const STEP   = 22   // 3D 底座厚度
 
   // ── 深色底板 ──────────────────────────────────────────────────────────────
   c.fillStyle = "#081510"
   c.fillRect(0, 0, W, H)
 
   const cols = [
-    { label: "記帳",    sub: "點選開始記帳", drawIcon: iconAdd,    accent: true  },
-    { label: "最近紀錄", sub: "查看最近 5 筆", drawIcon: iconList,   accent: false },
-    { label: "搜尋客戶", sub: "快速找客戶",   drawIcon: iconSearch, accent: false },
+    { label: "記帳",     sub: "點選開始記帳",  drawIcon: iconAdd,  accent: true  },
+    { label: "最近紀錄", sub: "查看最近 5 筆", drawIcon: iconList, accent: false },
   ]
 
   const ICON_CY  = H * 0.36
-  const LABEL_CY = ICON_CY + ICON_R + 90
-  const SUB_CY   = LABEL_CY + 105
+  const LABEL_CY = ICON_CY + ICON_R + 100
+  const SUB_CY   = LABEL_CY + 115
 
   cols.forEach(({ label, sub, drawIcon, accent }, i) => {
     const BX = i * COL + PAD_X
     const BY = PAD_Y
     const BW = COL - PAD_X * 2
-    const BH = H - PAD_Y * 2 - STEP   // 主體高度（留出底座空間）
+    const BH = H - PAD_Y * 2 - STEP
     const cx = i * COL + COL / 2
 
-    // ── 1. 外部 drop shadow（整體浮起感）──────────────────────────────────
+    // ── 1. 外部 drop shadow ───────────────────────────────────────────────
     c.fillStyle = "rgba(0,0,0,0.6)"
     c.beginPath()
     c.roundRect(BX + 8, BY + STEP + 14, BW, BH, RADIUS + 2)
     c.fill()
 
-    // ── 2. 底座「ledge」（3D 厚度，按鍵的「底邊」）─────────────────────────
-    // 顏色比主體深 2 階
+    // ── 2. 底座「ledge」────────────────────────────────────────────────────
     c.fillStyle = accent ? "#065a24" : "#054d1e"
     c.beginPath()
     c.roundRect(BX, BY + STEP, BW, BH, RADIUS)
     c.fill()
 
-    // ── 3. 按鈕主體（蓋在 ledge 上方，比 ledge 高 STEP px）─────────────────
+    // ── 3. 按鈕主體 ────────────────────────────────────────────────────────
     const grad = c.createLinearGradient(BX, BY, BX, BY + BH)
     if (accent) {
-      grad.addColorStop(0,   "#52ec8e")   // 最亮頂
-      grad.addColorStop(0.3, "#22cc5e")   // 主色
+      grad.addColorStop(0,   "#52ec8e")
+      grad.addColorStop(0.3, "#22cc5e")
       grad.addColorStop(0.7, "#17a84a")
-      grad.addColorStop(1,   "#0d7a34")   // 底部稍暗
+      grad.addColorStop(1,   "#0d7a34")
     } else {
       grad.addColorStop(0,   "#3de07a")
       grad.addColorStop(0.3, "#18be50")
@@ -126,7 +110,7 @@ function drawImage() {
     c.roundRect(BX, BY, BW, BH, RADIUS)
     c.fill()
 
-    // ── 4. 頂部光澤（上半段白色反光層）─────────────────────────────────────
+    // ── 4. 頂部光澤 ────────────────────────────────────────────────────────
     const sheen = c.createLinearGradient(BX, BY, BX, BY + BH * 0.42)
     sheen.addColorStop(0, "rgba(255,255,255,0.32)")
     sheen.addColorStop(0.5,"rgba(255,255,255,0.08)")
@@ -136,14 +120,14 @@ function drawImage() {
     c.roundRect(BX, BY, BW, BH, RADIUS)
     c.fill()
 
-    // ── 5. 頂邊高光線（1px 白色描邊 → 最亮邊緣）───────────────────────────
+    // ── 5. 頂邊高光線 ──────────────────────────────────────────────────────
     c.strokeStyle = "rgba(255,255,255,0.55)"
     c.lineWidth = 4
     c.beginPath()
     c.roundRect(BX + 3, BY + 3, BW - 6, BH - 6, RADIUS - 1)
     c.stroke()
 
-    // ── 6. 底部暗化（按鈕底邊接近 ledge 的漸層，增加厚度感）────────────────
+    // ── 6. 底部暗化 ────────────────────────────────────────────────────────
     const fade = c.createLinearGradient(BX, BY + BH * 0.65, BX, BY + BH)
     fade.addColorStop(0, "rgba(0,0,0,0.00)")
     fade.addColorStop(1, "rgba(0,0,0,0.30)")
@@ -152,11 +136,10 @@ function drawImage() {
     c.roundRect(BX, BY, BW, BH, RADIUS)
     c.fill()
 
-    // ── 7. ledge 與主體交接線（凹槽感）──────────────────────────────────────
+    // ── 7. ledge 交接線 ────────────────────────────────────────────────────
     c.strokeStyle = "rgba(0,0,0,0.45)"
     c.lineWidth = 6
     c.beginPath()
-    // 只畫底部水平那一條線
     c.moveTo(BX + RADIUS, BY + BH)
     c.lineTo(BX + BW - RADIUS, BY + BH)
     c.stroke()
@@ -166,18 +149,17 @@ function drawImage() {
 
     // ── 主標籤 ────────────────────────────────────────────────────────────
     c.textAlign = "center"
-    // 文字陰影（讓字在亮綠上更清晰）
     c.shadowColor = "rgba(0,0,0,0.4)"
     c.shadowBlur  = 12
     c.shadowOffsetY = 4
     c.fillStyle = "#ffffff"
-    c.font = `bold ${accent ? 120 : 108}px NotoSansCJK`
+    c.font = `bold ${accent ? 140 : 128}px NotoSansCJK`
     c.fillText(label, cx, LABEL_CY)
 
     // ── 副標籤 ────────────────────────────────────────────────────────────
     c.shadowBlur = 6; c.shadowOffsetY = 2
     c.fillStyle = "rgba(255,255,255,0.78)"
-    c.font = "64px NotoSansCJK"
+    c.font = "72px NotoSansCJK"
     c.fillText(sub, cx, SUB_CY)
 
     c.shadowColor = "transparent"; c.shadowBlur = 0; c.shadowOffsetY = 0
@@ -212,7 +194,7 @@ async function lineAPI(method, path, body, raw) {
 // ── 3. 主流程 ────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log("🎨 生成 Rich Menu 圖片（三欄版）...")
+  console.log("🎨 生成 Rich Menu 圖片（兩欄版）...")
   const imgBuf = drawImage()
   writeFileSync(IMG_OUT, imgBuf)
   console.log(`✅ 圖片儲存：${IMG_OUT}`)
@@ -227,29 +209,22 @@ async function main() {
   }
 
   const W = 2500, H = 843
-  const COL = Math.round(W / 3)
+  const COL = Math.round(W / 2)  // 兩欄
 
-  console.log("\n📤 建立 Rich Menu...")
+  console.log("\n📤 建立 Rich Menu（兩欄版）...")
   const menu = await lineAPI("POST", "/v2/bot/richmenu", {
     size: { width: W, height: H },
     selected: true,
-    name: "記帳選單 v2",
+    name: "記帳選單 v3",
     chatBarText: "📦 記帳 / 查詢",
     areas: [
       {
-        bounds: { x: 0,       y: 0, width: COL,       height: H },
-        action: { type: "postback", label: "記帳",    data: "a=start" },
+        bounds: { x: 0,       y: 0, width: COL, height: H },
+        action: { type: "postback", label: "記帳", data: "a=start" },
       },
       {
-        bounds: { x: COL,     y: 0, width: COL,       height: H },
+        bounds: { x: COL,     y: 0, width: W - COL, height: H },
         action: { type: "postback", label: "最近紀錄", data: "a=recent" },
-      },
-      {
-        bounds: { x: COL * 2, y: 0, width: W - COL * 2, height: H },
-        action: {
-          type: "postback", label: "搜尋客戶", data: "a=search_prompt",
-          inputOption: "openKeyboard", fillInText: "搜尋客戶：",
-        },
       },
     ],
   })
@@ -273,7 +248,7 @@ async function main() {
   await lineAPI("POST", `/v2/bot/user/all/richmenu/${menu.richMenuId}`)
 
   console.log(`\n🎉 完成！Rich Menu ID: ${menu.richMenuId}`)
-  console.log("三欄版：📦 記帳 ｜ 📋 最近紀錄 ｜ 🔍 搜尋客戶")
+  console.log("兩欄版：📦 記帳（開表單）｜ 📋 最近紀錄")
 }
 
 main().catch(e => { console.error("❌", e.message); process.exit(1) })
