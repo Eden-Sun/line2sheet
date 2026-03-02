@@ -261,7 +261,7 @@ function customerFlex(recents: string[]): object {
       label: "🔍 搜尋客戶",
       data: "a=search_prompt",
       inputOption: "openKeyboard",
-      fillInText: "",
+      fillInText: "搜尋客戶名稱",
     },
     style: "primary", color: "#1a8cff", height: "sm", flex: 1,
   }))
@@ -297,7 +297,7 @@ function amountFlex(customer: string, amounts: number[]): object {
   rows.push(row(
     { type: "button",
       action: { type: "postback", label: "✏️ 自行輸入", data: `a=custom_a&c=${ce}`,
-        inputOption: "openKeyboard", fillInText: "" },
+        inputOption: "openKeyboard", fillInText: "輸入金額" },
       style: "secondary", height: "sm", flex: 1 },
     btn("↩️ 換客戶", "a=start"),
   ))
